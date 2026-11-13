@@ -1,0 +1,56 @@
+{
+  "title": "Lost in translation: code for the CpG-level evaluation of the clinical value of cancer DNA methylation markers (NDRG4, GREM1, LY75)",
+  "description": "<p>Analysis code accompanying the manuscript <em>Lost in translation: How CpG site selection and assay design determine the clinical value of cancer DNA methylation markers</em> (Lommen, Coussement et al.).</p><p>The repository contains the processing pipeline for targeted (amplicon) bisulfite sequencing, including the amplicon-aware assignment of read pairs to overlapping amplicons, and the R analysis that evaluates the diagnostic (NDRG4, colorectal cancer) and prognostic (GREM1, clear-cell renal cell carcinoma; LY75, melanoma) value of individual CpGs, amplicons, read-based measures and MSP assays using the Akaike Information Criterion, together with the intra-amplicon comparisons of CpGs. A conda environment file lists the tools and versions used.</p><p>Patient data are not included.</p>",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "MIT",
+  "language": "eng",
+  "keywords": [
+    "DNA methylation",
+    "biomarker",
+    "targeted bisulfite sequencing",
+    "amplicon sequencing",
+    "CpG",
+    "Akaike Information Criterion",
+    "colorectal cancer",
+    "renal cell carcinoma",
+    "melanoma",
+    "NDRG4",
+    "GREM1",
+    "LY75"
+  ],
+  "creators": [
+    {
+      "name": "Lommen, Kim",
+      "affiliation": "Department of Pathology, GROW - Research Institute for Oncology and Reproduction, Maastricht University Medical Center, Maastricht, The Netherlands"
+    },
+    {
+      "name": "Coussement, Louis",
+      "affiliation": "Department of Mathematical Modelling, Statistics and Bioinformatics, Ghent University, Ghent, Belgium; Cancer Research Institute Ghent, Ghent, Belgium"
+    },
+    {
+      "name": "Vandersmissen, Johan",
+      "affiliation": "Department of Pathology, GROW - Research Institute for Oncology and Reproduction, Maastricht University Medical Center, Maastricht, The Netherlands"
+    },
+    {
+      "name": "Herman, James G.",
+      "affiliation": "UPMC Hillman Cancer Center, Department of Medicine, University of Pittsburgh School of Medicine, Pittsburgh, PA, USA"
+    },
+    {
+      "name": "Van Criekinge, Wim",
+      "affiliation": "Department of Mathematical Modelling, Statistics and Bioinformatics, Ghent University, Ghent, Belgium; Cancer Research Institute Ghent, Ghent, Belgium"
+    },
+    {
+      "name": "Smits, Kim M.",
+      "affiliation": "Department of Pathology, GROW - Research Institute for Oncology and Reproduction, Maastricht University Medical Center, Maastricht, The Netherlands"
+    },
+    {
+      "name": "De Meyer, Tim",
+      "affiliation": "Department of Mathematical Modelling, Statistics and Bioinformatics, Ghent University, Ghent, Belgium; Cancer Research Institute Ghent, Ghent, Belgium"
+    },
+    {
+      "name": "van Engeland, Manon",
+      "affiliation": "Department of Pathology, GROW - Research Institute for Oncology and Reproduction, Maastricht University Medical Center, Maastricht, The Netherlands"
+    }
+  ]
+}
