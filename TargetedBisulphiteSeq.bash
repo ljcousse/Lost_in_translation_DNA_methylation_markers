@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 dir_fastq_1=/share/run231
 dir_fastq_2=/share/run239/Melanoma-382642780/FASTQ_Generation_2023-02-27_10_32_07Z-656933458/

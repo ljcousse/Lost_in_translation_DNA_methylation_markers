@@ -17,13 +17,18 @@
 ######################
 
 options(warn=1L)
-# mincov<-4 # Minimal coverage of CpG in all samples
-# minperc<-1 # Percentage of samples that have to meet the minimal Coverage
-# !!!!! If minperc < 1 you have to filter out rows with NA values for boxplot etc.
-# minmethreads<-4 # Minimum number of (hydroxy)methylated reads in all samples (B-samples)
-output_dir <- "/data/homes/louisc/Project_KimSmits/"
+
 ct <- 0.01 # Constant value for calculation M-values from methylation degrees
 
+config_file <- Sys.getenv("PROJECT_CONFIG", "config.env")
+if (!file.exists(config_file)) {
+  stop("Config file not found: ", config_file,
+       ". Copy config.example.env to config.env and edit the paths.")
+}
+readRenviron(config_file)
+
+project_dir <- Sys.getenv("PROJECT_DIR")
+if (!dir.exists(project_dir)) stop("PROJECT_DIR does not exist: ", project_dir)
 
 #############################
 # Loading required packages #
@@ -53,7 +58,7 @@ library(data.table)
 
 source("Plots_AIC_function.R")
 
-tiff(paste(output_dir,"LegendFirstPanel.jpg",sep=""),width=2048+512+256,height=1024*2/3)
+tiff(paste(project_dir,"LegendFirstPanel.jpg",sep=""),width=2048+512+256,height=1024*2/3)
 par(mar=c(6,8,2,40))
 plot(1,1,type="n")
 multiplier <- 2
@@ -93,7 +98,7 @@ dev.off()
 # Methylation data is extracted by bismark and saved as ".cov" files. The BiSeq package is used to load in the data for both runs seperatly. Data for both runs will be merged later on.
 # Set working directory
 wd_ini <- getwd()
-setwd(paste(output_dir,"meth",sep=""))
+setwd(paste(project_dir,"meth",sep=""))
 
 # Get filenames of cov files
 files <- list.files()[grep("CpG",list.files())]
@@ -103,7 +108,7 @@ files[grepl("run_239",files)] <- files[grepl("run_239",files)][sort(as.numeric(g
 # print(files)
 
 # Get sample annotation
-sample_annot <- read.xlsx(paste(output_dir,"SampleSheet MUMC run.xlsx",sep=""),1,startRow=17,colNames=T)
+sample_annot <- read.xlsx(paste(project_dir,"SampleSheet MUMC run.xlsx",sep=""),1,startRow=17,colNames=T)
 sample_annot <- sample_annot[,1:2]
 sample_annot[19,2] <- "111N_2057T_M31"
 sample_annot <- cbind(sample_annot[,1],t(matrix(unlist(strsplit(sample_annot[,2],"_")),nrow=3)))
@@ -113,7 +118,7 @@ sample_annot <- data.frame(sample_annot,stringsAsFactors = F)
 sample_annot$Sample_ID <- paste(rep("run231",nrow(sample_annot)),sample_annot$Sample_ID,sep="_")
 
 # Get additional sample anotation melanoma follow up
-sample_annot_2 <- read.xlsx(paste(output_dir,"Clinical follow-up data additional melanoma samples - Location-III.xlsx",sep=""),1,colNames=T)
+sample_annot_2 <- read.xlsx(paste(project_dir,"Clinical follow-up data additional melanoma samples - Location-III.xlsx",sep=""),1,colNames=T)
 sample_annot_2 <- sample_annot_2[-c(which(sample_annot_2$Sample.ID%in%c(21,19))),]
 sample_annot_add <- cbind(paste(rep("run239",nrow(sample_annot_2)),sample_annot_2$Sample.ID,sep="_"),
                           rep("",nrow(sample_annot_2)),
@@ -128,8 +133,8 @@ sample_annot <- sample_annot[!(sample_annot$Sample_ID%in%c("run231_30","run231_4
 files <- files[!(grepl("run_231_30_",files) | grepl("run_231_44_",files))]
 
 # Get primer annotation
-output_dir <- "/data/homes/louisc/Project_KimSmits/"
-primer_annot <- read.xlsx(paste(output_dir,"SupplementaryTable1.xlsx",sep=""))
+project_dir <- "/data/homes/louisc/Project_KimSmits/"
+primer_annot <- read.xlsx(paste(project_dir,"SupplementaryTable1.xlsx",sep=""))
 primer_annot[,1] <- gsub("FY","LY",primer_annot[,1])
 primer_annot[,1] <- gsub(" ","",primer_annot[,1])
 colnames(primer_annot) <- primer_annot[1,]
@@ -148,7 +153,7 @@ primer_annot_NDRG4
 primer_annot_LY75
 
 # CRC 
-CRC_annot <- read.xlsx(paste(output_dir,"Klinische data location III CRC, ccRCC, melanoma- compleet 17022022.xlsx",sep=""),
+CRC_annot <- read.xlsx(paste(project_dir,"Klinische data location III CRC, ccRCC, melanoma- compleet 17022022.xlsx",sep=""),
                        1,startRow=1,colNames=T)
 CRC_annot$Sample_ID <- paste(str_extract(CRC_annot[,1],"^[0-9]+"),CRC_annot[,2],sep="")
 
@@ -156,7 +161,7 @@ sum(sample_annot$CRC%in%CRC_annot$Sample_ID)
 CRC_annot <- CRC_annot[CRC_annot$Sample_ID%in%sample_annot$CRC,]
 
 # ccRCC
-ccRCC_annot <- read.xlsx(paste(output_dir,"Klinische data location III CRC, ccRCC, melanoma- compleet 17022022.xlsx",sep=""),
+ccRCC_annot <- read.xlsx(paste(project_dir,"Klinische data location III CRC, ccRCC, melanoma- compleet 17022022.xlsx",sep=""),
                          2,startRow=1,colNames=T)
 ccRCC_annot$Sample_ID <- paste(ccRCC_annot[,1],ccRCC_annot[,2],sep="")
 
@@ -164,13 +169,13 @@ sum(sample_annot$ccRCC%in%ccRCC_annot$Sample_ID)
 ccRCC_annot <- ccRCC_annot[ccRCC_annot$Sample_ID%in%sample_annot$ccRCC,]
 
 # melanoma
-melanoma_annot <- read.xlsx(paste(output_dir,"Klinische data location III CRC, ccRCC, melanoma- compleet 17022022_edited.xlsx",sep=""),
+melanoma_annot <- read.xlsx(paste(project_dir,"Klinische data location III CRC, ccRCC, melanoma- compleet 17022022_edited.xlsx",sep=""),
                          3,startRow=1,colNames=T)
 melanoma_annot[6,2] <- "P32" 
 melanoma_annot$Sample_ID <- melanoma_annot[,2]
 melanoma_annot$run <- "run231"
 
-melanoma_annot_2 <- read.xlsx(paste(output_dir,"Clinical follow-up data additional melanoma samples - Location-III.xlsx",sep=""),1,colNames=T)
+melanoma_annot_2 <- read.xlsx(paste(project_dir,"Clinical follow-up data additional melanoma samples - Location-III.xlsx",sep=""),1,colNames=T)
 melanoma_annot_2[,3] <- tolower(melanoma_annot_2[,3])
 melanoma_annot_2 <- cbind(melanoma_annot_2[,1:8],rep(NA,nrow(melanoma_annot_2)),melanoma_annot_2[,9:ncol(melanoma_annot_2)],melanoma_annot_2[,2])
 melanoma_annot_2$Date.last.contact[is.na(melanoma_annot_2$Date.last.contact)] <- "?"
@@ -365,7 +370,7 @@ summary(locs_LY75$av_cov)
 ########################
 
 # Set working directory
-setwd(output_dir)
+setwd(project_dir)
 
 rrbs.rel <- rawToRel(rrbs)
 dat_meth_rates <- cbind(data.frame(locs),methLevel(rrbs.rel))
@@ -416,7 +421,7 @@ print(head(betas_NDRG4))
 
 dat_NDRG4 <- cbind(data.frame(locs_NDRG4)[,c(1:2,6)],betas_NDRG4)
 colnames(dat_NDRG4)[1:3] <- c("CHR","POS","AMPLICON")
-write.table(dat_NDRG4,file=paste(output_dir,"Meth_NDRG4.txt",sep=""),row.names = F,col.names = T,sep="\t",quote = F)
+write.table(dat_NDRG4,file=paste(project_dir,"Meth_NDRG4.txt",sep=""),row.names = F,col.names = T,sep="\t",quote = F)
 
 CRC_annot_sort <- CRC_annot[sort(CRC_annot$Sample_ID,index.return=T)$ix,]
 CRC_annot_sort <- CRC_annot_sort[CRC_annot_sort$Sample_ID%in%colnames(betas_NDRG4),]
@@ -503,7 +508,7 @@ print(head(betas_LY75))
 
 dat_LY75 <- cbind(data.frame(locs_LY75)[,c(1:2,6)],betas_LY75)
 colnames(dat_LY75)[1:3] <- c("CHR","POS","AMPLICON")
-write.table(dat_LY75,file=paste(output_dir,"Meth_LY75.txt",sep=""),row.names = F,col.names = T,sep="\t",quote = F)
+write.table(dat_LY75,file=paste(project_dir,"Meth_LY75.txt",sep=""),row.names = F,col.names = T,sep="\t",quote = F)
 
 melanoma_annot <- melanoma_annot[!(melanoma_annot$Date.last.contact=="?"),]
 
@@ -550,15 +555,15 @@ melanoma_annot_sort_BS <- melanoma_annot_sort
 
 # cox regression confounders
 # formula_CF <- formula(paste("Surv(Followup_time, MK_death) ~ Gender+Age+Breslow",sep=""))
-# formula_CF <- formula(paste("Surv(Followup_time, MK_death) ~ Gender+Age+Run",sep=""))
-formula_CF <- formula(paste("Surv(Followup_time, MK_death) ~ Gender+Age",sep=""))
+formula_CF <- formula(paste("Surv(Followup_time, MK_death) ~ Gender+Age+Run",sep=""))
+# formula_CF <- formula(paste("Surv(Followup_time, MK_death) ~ Gender+Age",sep=""))
 cn_formula_CF <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_CF))),"+",fixed=TRUE)))
 cox_CF <- coxph(formula_CF, data = melanoma_annot_sort_BS)
 print(summary(cox_CF))
 
 # cox regression msp
-# formula_MSP <- formula(paste("Surv(Followup_time, MK_death) ~ Meth+Run",sep=""))
-formula_MSP <- formula(paste("Surv(Followup_time, MK_death) ~ Meth",sep=""))
+formula_MSP <- formula(paste("Surv(Followup_time, MK_death) ~ Meth+Run",sep=""))
+# formula_MSP <- formula(paste("Surv(Followup_time, MK_death) ~ Meth",sep=""))
 cn_formula_MSP <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_MSP))),"+",fixed=TRUE)))
 cox_MSP <- coxph(formula_MSP, data = melanoma_annot_sort_BS)
 print(summary(cox_MSP))
@@ -576,8 +581,8 @@ for (i in 1:nrow(Mval_LY75_sort)){
   
   # cox regression
   # formula_i <- formula(paste("Surv(Followup_time, MK_death) ~ Meth_CpG_",i,"+Gender+Age+Breslow",sep=""))
-  # formula_i <- formula(paste("Surv(Followup_time, MK_death) ~ Meth_CpG_",i,"+Run",sep=""))
-  formula_i <- formula(paste("Surv(Followup_time, MK_death) ~ Meth_CpG_",i,sep=""))
+  formula_i <- formula(paste("Surv(Followup_time, MK_death) ~ Meth_CpG_",i,"+Run",sep=""))
+  # formula_i <- formula(paste("Surv(Followup_time, MK_death) ~ Meth_CpG_",i,sep=""))
   cn_formula_i <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_i))),"+",fixed=TRUE)))
   cox_BS_i <- coxph(formula_i, data = melanoma_annot_sort_BS)
   print(summary(cox_BS_i))
@@ -604,7 +609,7 @@ print(head(betas_GREM1))
 
 dat_GREM1 <- cbind(data.frame(locs_GREM1)[,c(1:2,6)],betas_GREM1)
 colnames(dat_GREM1)[1:3] <- c("CHR","POS","AMPLICON")
-write.table(dat_GREM1,file=paste(output_dir,"Meth_GREM1.txt",sep=""),row.names = F,col.names = T,sep="\t",quote = F)
+write.table(dat_GREM1,file=paste(project_dir,"Meth_GREM1.txt",sep=""),row.names = F,col.names = T,sep="\t",quote = F)
 
 ccRCC_annot_sort <- ccRCC_annot[sort(ccRCC_annot$Sample_ID,index.return=T)$ix,]
 ccRCC_annot_sort <- ccRCC_annot_sort[ccRCC_annot_sort$Sample_ID%in%colnames(betas_GREM1),]
@@ -876,7 +881,7 @@ rownames(dat_correl) <- dat_correl$ID
 
 mask_primers_NDRG4 <- (dat_correl[dat_NDRG4_ROC_logit_perCpG$ID,]$dist==0) & (!is.na(dat_correl[dat_NDRG4_ROC_logit_perCpG$ID,]$dist==0))
 
-tiff(paste(output_dir,"NDRG4_AIC.jpg",sep=""),width=2048+512+256,height=1024*2/3)
+tiff(paste(project_dir,"NDRG4_AIC.jpg",sep=""),width=2048+512+256,height=1024*2/3)
 par(mfrow=c(2,1))
 plotPlots_AIC(dat_gene=dat_NDRG4_ROC_logit_perCpG,
               locs_gene=locs_NDRG4, gene="NDRG4",
@@ -896,7 +901,7 @@ dev.off()
 
 mask_primers_LY75 <- (dat_correl[dat_LY75_ROC_logit_perCpG$ID,]$dist==0) & (!is.na(dat_correl[dat_LY75_ROC_logit_perCpG$ID,]$dist==0))
 
-tiff(paste(output_dir,"LY75_AIC.jpg",sep=""),width=2048+512+256,height=1024*2/3)
+tiff(paste(project_dir,"LY75_AIC.jpg",sep=""),width=2048+512+256,height=1024*2/3)
 par(mfrow=c(2,1))
 plotPlots_AIC(dat_gene=dat_LY75_ROC_logit_perCpG,
               locs_gene=locs_LY75, gene="LY75",
@@ -916,7 +921,7 @@ dev.off()
 
 mask_primers_GREM1 <- (dat_correl[dat_GREM1_ROC_logit_perCpG$ID,]$dist==0) & (!is.na(dat_correl[dat_GREM1_ROC_logit_perCpG$ID,]$dist==0))
 
-tiff(paste(output_dir,"GREM1_AIC.jpg",sep=""),width=2048+512+256,height=1024*2/3)
+tiff(paste(project_dir,"GREM1_AIC.jpg",sep=""),width=2048+512+256,height=1024*2/3)
 par(mfrow=c(2,1))
 plotPlots_AIC(dat_gene=dat_GREM1_ROC_logit_perCpG,
           locs_gene=locs_GREM1, gene="GREM1",

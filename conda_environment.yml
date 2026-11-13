@@ -1,0 +1,54 @@
+# Conda environment for "Lost in translation: DNA methylation markers"
+# Create:   conda env create -f conda_environment.yml
+# Activate: conda activate lost_in_translation
+#
+# Versions = those of the analysis: the server environment (conda env export --no-builds) for the tools and conda R
+# packages, and sessionInfo() of TargetedBisulphite_analysis (run 2026-11-13; R 4.2.3, Bioconductor 3.16) for the R
+# packages installed outside conda (Bioconductor packages, precrec). conda-forge writes R version dashes as underscores
+# (survival 3.5-7 -> 3.5_7). Only the tools and R packages used by the scripts in this repository are listed; conda
+# resolves their dependencies. "CHECK": not in the server environment - fill in the version that was actually used.
+#
+# Not available via conda: wgbs_tools (read-based .pat files), install from https://github.com/nloyfer/wgbs_tools
+
+name: lost_in_translation
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  # Pre-processing, alignment and methylation calling (TargetedBisulphiteSeq.bash)
+  - fastqc=0.11.9                     # CHECK: Methods; not in the server environment
+  - trim-galore=0.6.10                # CHECK: Methods; not in the server environment
+  - cutadapt                          # CHECK: version wrapped by Trim Galore; not in the server environment
+  - bismark=0.24.1                    # server environment (Methods say v0.22.3)
+  - bowtie2=2.5.1                     # server environment
+  - samtools=1.6                      # server environment
+  - multiqc=1.17                      # server environment
+  - pigz
+
+  # R analysis (AmpliconAwareMapping.R, TargetedBisulphite_analysis.R, Intra_amplicon_diff_functions.R,
+  # cpg_density.R, plot_cpg_density.R)
+  - r-base=4.2.3
+  - r-data.table=1.14.8
+  - r-ggplot2=3.4.4
+  - r-gridextra=2.3
+  - r-openxlsx=4.2.5.2
+  - r-precrec=0.14.2                  # installed outside conda on the server (sessionInfo)
+  - r-scales=1.2.1
+  - r-stringr=1.5.1
+  - r-survival=3.5_7
+  - r-survminer=0.4.9
+  - r-yaml=2.3.7                      # reading the local path configuration
+  - r-patchwork                       # CHECK: rebuttal CpG density figure only; not in the server environment
+  # Bioconductor 3.16, installed outside conda on the server (versions from sessionInfo)
+  - bioconductor-biseq=1.38.0
+  - bioconductor-biomart=2.54.1
+  - bioconductor-biostrings=2.66.0
+  - bioconductor-genomicfeatures=1.50.4
+  - bioconductor-genomicranges=1.50.2
+  - bioconductor-limma=3.54.2
+  - bioconductor-rsamtools=2.14.0
+  - bioconductor-rtracklayer=1.58.0
+
+# Versions actually used, run on the analysis server:
+#   trim_galore --version; cutadapt --version; fastqc --version   (in the environment/module used for trimming)
+#   Rscript -e 'packageVersion("patchwork")'                       (where the rebuttal figure was made)

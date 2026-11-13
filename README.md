@@ -23,6 +23,8 @@ The targeted bisulfite sequencing data generated in this study, comprising both 
 ### License
 © 2026 Louis Coussement. All rights reserved. This code is provided for review and reproducibility purposes only. No permission is granted to use, copy, modify, or distribute it without the author's written consent.
 
+This license will be changed upon publication.
+
 ### Citation
 Publication will hopefully be coming soon:
 

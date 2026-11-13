@@ -18,6 +18,8 @@ plots_expr_prognosis
 plots_DE
 ChromFigs
 
+config.env
+
 Check_TumorPurity.R
 InfiniumAnalysis_cox.R
 PanelAnalysis.R
