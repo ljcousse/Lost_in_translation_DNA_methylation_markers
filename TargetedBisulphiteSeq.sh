@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 
-dir_fastq_1=/share/run231
-dir_fastq_2=/share/run239/Melanoma-382642780/FASTQ_Generation_2023-02-27_10_32_07Z-656933458/
-dir_work=/data/homes/louisc/Project_KimSmits
+# Paths are read from config.env (copy config.example.env to config.env and fill in the local paths)
+config_file=${PROJECT_CONFIG:-config.env}
+if [ ! -f "$config_file" ]; then
+  echo "Config file not found: $config_file. Copy config.example.env to config.env and edit the paths."
+  exit 1
+fi
+source "$config_file"
+
+dir_fastq_1=$FASTQ_DIR_RUN231
+dir_fastq_2=$FASTQ_DIR_RUN239
+dir_work=$PROJECT_DIR
 
 dir_genome=$dir_work/Human
 dir_cov=$dir_work/cov
