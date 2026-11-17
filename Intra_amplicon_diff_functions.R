@@ -85,6 +85,9 @@ bootstrap_AIC_prognostic <- function(l){
 
 
 perform_AIC_analysis <- function(primer_annot,Mval,sample_annot,gene,seed_perm=42){
+  # Reproducible permutations: mclapply children only follow set.seed() with the L'Ecuyer-CMRG generator (ToDo E18)
+  rng_kind_ori <- RNGkind()[1]
+  RNGkind("L'Ecuyer-CMRG")
   set.seed(seed_perm)
   pval_list <- list()
   counter_list <- 1
@@ -98,7 +101,7 @@ perform_AIC_analysis <- function(primer_annot,Mval,sample_annot,gene,seed_perm=4
       cn_oi <- c("Tissue","Patient_ID")
       part_formula <- "Tissue"
     } else {
-      cn_oi <- c("NK_death","Followup_time")
+      cn_oi <- c("NK_death","Followup_time","Gender","Age")
       part_formula <- "Surv(Followup_time, NK_death)"
     }
     
@@ -120,6 +123,11 @@ perform_AIC_analysis <- function(primer_annot,Mval,sample_annot,gene,seed_perm=4
     dat_amplicon <- data.frame(dat_amplicon,stringsAsFactors = F)
     if(gene=="NDRG4"){
       dat_amplicon$Tissue <- as.factor(dat_amplicon$Tissue)
+    }
+    # Non-nested Cox models: methylation only (A14 final 2026-11-13); Gender/Age kept for the complete-case samples
+    if (gene!="NDRG4"){
+      dat_amplicon$Gender <- as.factor(dat_amplicon$Gender)
+      dat_amplicon$Age <- as.numeric(dat_amplicon$Age)
     }
     # print(head(dat_amplicon))
     # print(str(dat_amplicon))
@@ -169,6 +177,10 @@ perform_AIC_analysis <- function(primer_annot,Mval,sample_annot,gene,seed_perm=4
         pval[counter,1:2] <- cn_names[c(i,j)]
         dat_test_i <<- dat_amplicon[,c(cn_oi,paste0(rep("CpG_",2),cn_names[c(i,j)]))]
         dat_test_i <- dat_amplicon[,c(cn_oi,paste0(rep("CpG_",2),cn_names[c(i,j)]))]
+        # Both CpG models on the same samples: drop samples missing either CpG (ToDo A19)
+        mask_complete_ij <- complete.cases(dat_test_i)
+        dat_test_i <- dat_test_i[mask_complete_ij,]
+        dat_test_i <<- dat_test_i
 
         #print(head(dat_test_i))
 
@@ -215,6 +227,7 @@ perform_AIC_analysis <- function(primer_annot,Mval,sample_annot,gene,seed_perm=4
       print("No significant differences!")
     }
   }
+  RNGkind(rng_kind_ori)
   return(pval_list)
 }
 
@@ -254,7 +267,9 @@ intra_amplicon_plot <- function(name,AIC_amplicon,pval_sign,gene,k,dir="AIC_plot
   dev.off()
 }
 
-reduced_AIC_analysis <- function(gene,pval_list,pval_cutoff,dat_AIC){
+# star_cutoffs: one star per cut-off below the p-value (default = the stars of the original Figure 4);
+# dir: output directory of the amplicon plots (with trailing "/")
+reduced_AIC_analysis <- function(gene,pval_list,pval_cutoff,dat_AIC,star_cutoffs=c(0.1,0.01,0.001,0.001),dir="AIC_plots_red/"){
   pval_list_red <- pval_list
   for (k in 1:nrow(primer_annot_list[[gene]])){
     if (is.null(pval_list_red[[primer_annot_list[[gene]]$name[k]]])){
@@ -272,15 +287,16 @@ reduced_AIC_analysis <- function(gene,pval_list,pval_cutoff,dat_AIC){
       pval_sign <- pval[pval$pval<pval_cutoff,]
       print(sprintf("%s significant p values for %s",nrow(pval_sign),primer_annot_list[[gene]]$name[k]))
       print(pval_sign[,c(1,2,5,6)])
-      if (0.01%%100/10==5){
-        sign_level <<- (pval_sign$pval < 0.05) + (pval_sign$pval < 0.005) + (pval_sign$pval < 0.0005) + (pval_sign$pval < 0.0005)
-      } else {
-        sign_level <<- (pval_sign$pval < 0.1) + (pval_sign$pval < 0.01) + (pval_sign$pval < 0.001) + (pval_sign$pval < 0.001)
+      # Number of stars per pair = number of star_cutoffs above its p-value (sign_level is read by intra_amplicon_plot)
+      sign_level_k <- rep(0, nrow(pval_sign))
+      for (cutoff in star_cutoffs){
+        sign_level_k <- sign_level_k + (pval_sign$pval < cutoff)
       }
+      sign_level <<- sign_level_k
       
       AIC_amplicon <- dat_AIC[dat_AIC$ID%in%rownames(dat_correl_k),c("ID","AIC")]
       colnames(AIC_amplicon) <- c("CpG","AIC")
-      intra_amplicon_plot(primer_annot_list[[gene]]$name[k],AIC_amplicon,pval_sign,gene,k,dir="AIC_plots_red/")
+      intra_amplicon_plot(primer_annot_list[[gene]]$name[k],AIC_amplicon,pval_sign,gene,k,dir=dir)
     } else {
       print(sprintf("No significant p values for %s",primer_annot_list[[gene]]$name[k]))
     }

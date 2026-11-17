@@ -6,7 +6,15 @@ library(parallel)
 # Set working directory #
 #########################
 
-setwd("/data/homes/louisc/Project_KimSmits/mapping_bis")
+# Paths are read from config.env (copy config.example.env to config.env and fill in the local paths)
+config_file <- Sys.getenv("PROJECT_CONFIG", "config.env")
+if (!file.exists(config_file)) {
+  stop("Config file not found: ", config_file, ". Copy config.example.env to config.env and edit the paths.")
+}
+readRenviron(config_file)
+project_dir <- paste0(sub("/+$", "", Sys.getenv("PROJECT_DIR")), "/")
+
+setwd(paste0(project_dir, "mapping_bis"))
 
 #################
 # Get bam files #
@@ -19,7 +27,7 @@ files_list <- files_list[grepl("^run.*.bam$",files_list)]
 # Load amplicon data #
 ######################
 
-output_dir <- "/data/homes/louisc/Project_KimSmits/"
+output_dir <- project_dir
 primer_annot <- read.xlsx(paste(output_dir,"SupplementaryTable1.xlsx",sep=""))
 primer_annot[,1] <- gsub("FY","LY",primer_annot[,1])
 primer_annot[,1] <- gsub(" ","",primer_annot[,1])
@@ -92,8 +100,8 @@ myfun <- function(j){
   # dat_test <- cbind(aln[[1]]$qname[init_ix],data.frame(GR_aln_map)[init_ix,],aln[[1]]$isize)
   # dat_test[dat_test[,3]==160760991,]
   
-  if(!dir.exists("/data/homes/louisc/Project_KimSmits/tabs_amplicon")){dir.create("/data/homes/louisc/Project_KimSmits/tabs_amplicon")}
-  jpeg(paste0("/data/homes/louisc/Project_KimSmits/tabs_amplicon/",gsub("_S[0-9]+.+.bam$","",file_loc),"_readsize_distr.jpg"))
+  if(!dir.exists(paste0(project_dir,"tabs_amplicon"))){dir.create(paste0(project_dir,"tabs_amplicon"))}
+  jpeg(paste0(project_dir,"tabs_amplicon/",gsub("_S[0-9]+.+.bam$","",file_loc),"_readsize_distr.jpg"))
   hist(data.frame(GR_aln_map)$width,xlab="Read size (bp)",main=gsub("_S[0-9]+.+.bam$","",file_loc))
   dev.off()
   
@@ -154,7 +162,7 @@ myfun <- function(j){
   }
   colnames(tab_amplicon) <- c("Amplicon","Mapped_reads")
   print(tab_amplicon)
-  write.table(tab_amplicon,paste0("/data/homes/louisc/Project_KimSmits/tabs_amplicon/",gsub("_S[0-9]+.+.bam$","",file_loc),"_tab_amplicon.txt"),
+  write.table(tab_amplicon,paste0(project_dir,"tabs_amplicon/",gsub("_S[0-9]+.+.bam$","",file_loc),"_tab_amplicon.txt"),
               col.names = T, row.names = F, quote = F, sep="\t")
   
   print(paste0(as.numeric(tab_amplicon[tab_amplicon[,1]=="NAN",2])/sum(as.numeric(tab_amplicon[,2]))*100,

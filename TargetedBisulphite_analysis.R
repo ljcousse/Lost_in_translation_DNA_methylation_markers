@@ -30,6 +30,16 @@ readRenviron(config_file)
 project_dir <- Sys.getenv("PROJECT_DIR")
 if (!dir.exists(project_dir)) stop("PROJECT_DIR does not exist: ", project_dir)
 
+# Log file: console output (also shown on screen) + messages/warnings/errors (log only)
+log_file <- file.path(project_dir, paste0("TargetedBisulphite_analysis_", format(Sys.time(), "%Y%m%d_%H%M"), ".log"))
+log_con <- file(log_file, open = "wt")
+sink(log_con, split = TRUE)
+sink(log_con, type = "message")
+print(sprintf("Start: %s", format(Sys.time())))
+print(sprintf("Log file: %s", log_file))
+# Exactly one trailing "/" (paths below are built with paste(project_dir, ..., sep=""))
+project_dir <- paste0(sub("/+$", "", project_dir), "/")
+
 #############################
 # Loading required packages #
 #############################
@@ -133,7 +143,6 @@ sample_annot <- sample_annot[!(sample_annot$Sample_ID%in%c("run231_30","run231_4
 files <- files[!(grepl("run_231_30_",files) | grepl("run_231_44_",files))]
 
 # Get primer annotation
-project_dir <- "/data/homes/louisc/Project_KimSmits/"
 primer_annot <- read.xlsx(paste(project_dir,"SupplementaryTable1.xlsx",sep=""))
 primer_annot[,1] <- gsub("FY","LY",primer_annot[,1])
 primer_annot[,1] <- gsub(" ","",primer_annot[,1])
@@ -384,16 +393,25 @@ write.table(dat_meth_rates,file="methylation_rates.txt",row.names = F,col.names 
 # Get transcript annotation #
 #############################
 
-# Import gene structure 
-if (!file.exists("Genes_struct.Rda")){
+# Import gene structure (with transcript names for Figure 2; ToDo E15)
+if (!file.exists("Genes_struct_transcripts.Rda")){
   ensembl <- useEnsembl(biomart="ensembl",GRCh=37, dataset="hsapiens_gene_ensembl")
   genes_struct <- getBM(attributes = c('external_gene_name', 'ensembl_gene_id','ensembl_transcript_id','ensembl_exon_id','chromosome_name',
                                        'start_position','end_position',"exon_chrom_start","exon_chrom_end",'transcription_start_site')
                         ,mart = ensembl,filter="external_gene_name",values=c("NDRG4","LY75","GREM1"))
-  save(genes_struct,file="Genes_struct.Rda")
+  # Transcript names in a separate query: they are on another BioMart attribute page than the exon positions (v18)
+  transcript_names <- getBM(attributes = c('ensembl_transcript_id','external_transcript_name')
+                            ,mart = ensembl,filter="external_gene_name",values=c("NDRG4","LY75","GREM1"))
+  name_lookup <- setNames(transcript_names$external_transcript_name, transcript_names$ensembl_transcript_id)
+  genes_struct$external_transcript_name <- NA
+  mask_named <- genes_struct$ensembl_transcript_id%in%names(name_lookup)
+  genes_struct$external_transcript_name[mask_named] <- name_lookup[genes_struct$ensembl_transcript_id[mask_named]]
+  print(sprintf("Transcripts with a name: %d/%d", length(unique(genes_struct$ensembl_transcript_id[mask_named])),
+                length(unique(genes_struct$ensembl_transcript_id))))
+  save(genes_struct,file="Genes_struct_transcripts.Rda")
   print(head(genes_struct))
 } else {
-  load("Genes_struct.Rda")
+  load("Genes_struct_transcripts.Rda")
   print(head(genes_struct))
 }
 
@@ -453,12 +471,19 @@ dat_NDRG4_ROC_logit_perCpG <- data.frame(ID=rownames(Mval_NDRG4_sort),
 CRC_annot_sort_BS <- CRC_annot_sort
 
 # cox regression confounders
-formula_CF <- formula(paste("Tissue ~ Gender+Age+Patient_ID",sep=""))
+formula_CF <- formula(paste("Tissue ~ Patient_ID",sep=""))
 cn_formula_CF <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_CF))),"+",fixed=TRUE)))
 model_CF <- glm(formula_CF, 
                 data = CRC_annot_sort_BS, 
                 family = binomial(link="logit"))
 print(summary(model_CF))
+
+# Check: age and sex are constant within a patient, so aliased with Patient_ID (ToDo A14/M6a) -> same AIC without them
+model_CF_agesex <- glm(formula("Tissue ~ Gender+Age+Patient_ID"), data = CRC_annot_sort_BS, family = binomial(link="logit"))
+print(sprintf("NDRG4 base model AIC: %.6f (patient ID) vs %.6f (age + sex + patient ID)", AIC(model_CF), AIC(model_CF_agesex)))
+if (abs(AIC(model_CF) - AIC(model_CF_agesex)) > 1e-6){
+  stop("NDRG4: age/sex not aliased with patient ID - the base model without them is not equivalent")
+}
 
 # cox regression msp
 formula_MSP <- formula(paste("Tissue ~ Meth+Patient_ID",sep=""))
@@ -474,6 +499,7 @@ print(sprintf("Delta AIC for MSP amplicon: %s",AIC(model_MSP)-AIC(model_CF)))
 dat_NDRG4_ROC_logit_perCpG$logit <- NA
 dat_NDRG4_ROC_logit_perCpG$AIC <- NA
 dat_NDRG4_ROC_logit_perCpG$AIC_CF <- AIC(model_CF)
+dat_NDRG4_ROC_logit_perCpG$n_samples <- NA
 dat_NDRG4_ROC_logit_perCpG$est_logit <- NA
 dat_NDRG4_ROC_logit_perCpG$delta_AIC <- NA
 for (i in 1:nrow(Mval_NDRG4_sort)){
@@ -491,11 +517,61 @@ for (i in 1:nrow(Mval_NDRG4_sort)){
   print(summary(model_BS_i))
   
   # ROC BS
+  # Base model on the same samples as the CpG model (samples with missing values dropped; ToDo A19)
+  mask_complete_i <- complete.cases(CRC_annot_sort_BS[,c(paste("Meth_CpG_",i,sep=""),"Tissue","Patient_ID")])
+  model_CF_i <- glm(formula_CF, data = CRC_annot_sort_BS[mask_complete_i,], family = binomial(link="logit"))
+  dat_NDRG4_ROC_logit_perCpG$AIC_CF[i] <- AIC(model_CF_i)
+  dat_NDRG4_ROC_logit_perCpG$n_samples[i] <- sum(mask_complete_i)
   dat_NDRG4_ROC_logit_perCpG$AIC[i] <- AIC(model_BS_i)
   dat_NDRG4_ROC_logit_perCpG$delta_AIC[i] <- dat_NDRG4_ROC_logit_perCpG$AIC[i] - dat_NDRG4_ROC_logit_perCpG$AIC_CF[i]
   
 }                 
 write.table(dat_NDRG4_ROC_logit_perCpG,"NDRG4_AIC_table.txt",col.names = T,row.names = F,quote = F, sep="\t")
+
+## Separation check NDRG4 (complete T/N pairs; R4, ToDo A1/E1)
+#####################
+
+patients_per_id <- table(CRC_annot_sort$Patient_ID)
+complete_pairs <- names(patients_per_id)[patients_per_id == 2]
+print(sprintf("Complete T/N pairs: %d", length(complete_pairs)))
+# expect: 12
+
+tumor_ids <- paste0(complete_pairs, "T")
+normal_ids <- paste0(complete_pairs, "N")
+Mval_T <- Mval_NDRG4_sort[, tumor_ids]
+Mval_N <- Mval_NDRG4_sort[, normal_ids]
+Mval_diff <- Mval_T - Mval_N
+
+dat_NDRG4_ROC_logit_perCpG$n_pairs <- rowSums(!is.na(Mval_diff))
+dat_NDRG4_ROC_logit_perCpG$n_correct <- rowSums(Mval_diff > 0, na.rm = T)
+dat_NDRG4_ROC_logit_perCpG$n_reversed <- rowSums(Mval_diff < 0, na.rm = T)
+dat_NDRG4_ROC_logit_perCpG$n_tied <- rowSums(Mval_diff == 0, na.rm = T)
+dat_NDRG4_ROC_logit_perCpG$separated <- dat_NDRG4_ROC_logit_perCpG$n_correct == dat_NDRG4_ROC_logit_perCpG$n_pairs |
+  dat_NDRG4_ROC_logit_perCpG$n_reversed == dat_NDRG4_ROC_logit_perCpG$n_pairs
+
+# Paired effect size: mean T-N difference in M-values / SD of the differences
+dat_NDRG4_ROC_logit_perCpG$paired_effect <- rowMeans(Mval_diff, na.rm = T) / apply(Mval_diff, 1, sd, na.rm = T)
+dat_NDRG4_ROC_logit_perCpG$pval_wilcox_paired <- apply(Mval_diff, 1, function(x){
+  x <- x[!is.na(x)]
+  if (length(x) < 2){
+    return(NA)
+  }
+  return(wilcox.test(x, mu = 0, exact = F)$p.value)
+})
+
+# Theoretical floor of Delta AIC under complete separation: 2 - 2*N_paired*ln(2)
+floor_dAIC_NDRG4 <- 2 - 2 * (2 * length(complete_pairs)) * log(2)
+print(sprintf("Theoretical Delta AIC floor NDRG4: %.2f", floor_dAIC_NDRG4))
+# expect: -31.27
+dat_NDRG4_ROC_logit_perCpG$at_floor <- abs(dat_NDRG4_ROC_logit_perCpG$delta_AIC - floor_dAIC_NDRG4) < 0.1
+print(table(dat_NDRG4_ROC_logit_perCpG$separated, dat_NDRG4_ROC_logit_perCpG$at_floor, dnn = c("separated", "at_floor")))
+# expect: the 11 CpGs at the floor are all "separated"
+
+# Ranking of the floored CpGs by paired effect size (for the R3.M7 response)
+mask_floor <- dat_NDRG4_ROC_logit_perCpG$at_floor
+print(dat_NDRG4_ROC_logit_perCpG[mask_floor, c("ID", "Amplicon", "delta_AIC", "n_correct", "paired_effect")])
+print(cor.test(dat_NDRG4_ROC_logit_perCpG$delta_AIC, dat_NDRG4_ROC_logit_perCpG$paired_effect, method = "spearman", exact = F))
+write.table(dat_NDRG4_ROC_logit_perCpG, "NDRG4_AIC_table_separation.txt", col.names = T, row.names = F, quote = F, sep = "\t")
 
 ########################################
 # Analysis melanoma (LY75): PROGNOSTIC #
@@ -516,8 +592,6 @@ melanoma_annot_sort <- melanoma_annot[sort(melanoma_annot$Sample_ID,index.return
 melanoma_annot_sort <- melanoma_annot_sort[melanoma_annot_sort$Sample_ID%in%colnames(betas_LY75),]
 betas_LY75_sort <- betas_LY75[,sort(colnames(betas_LY75),index.return=T)$ix]
 betas_LY75_sort <- betas_LY75_sort[,colnames(betas_LY75_sort)%in%melanoma_annot_sort$Sample_ID]
-melanoma_annot_sort$NK_death <- melanoma_annot_sort$MK_death
-melanoma_annot_sort$NK_death <- as.numeric(melanoma_annot_sort$NK_death)
 sum(colnames(betas_LY75_sort)==melanoma_annot_sort$Sample_ID)
 write.table(melanoma_annot_sort,file="melanoma_annot_sort.txt",col.names = T,row.names = F,quote = F,sep="\t")
 
@@ -534,9 +608,20 @@ melanoma_annot_sort$Date_last_followup <- as.numeric(melanoma_annot_sort$Date_la
 melanoma_annot_sort$Date_last_followup <- as.Date(melanoma_annot_sort$Date_last_followup,origin="1899-12-30")
 melanoma_annot_sort$Followup_time <- melanoma_annot_sort$Date_last_followup - melanoma_annot_sort$Date_diag
 melanoma_annot_sort$MK_death <- melanoma_annot_sort$Outcome=="DOD"
+# Event indicator for the read-based and intra-amplicon models (they use NK_death): same endpoint (ToDo A15)
+melanoma_annot_sort$NK_death <- as.numeric(melanoma_annot_sort$MK_death)
 
 betas_LY75_sort <- betas_LY75_sort[,melanoma_annot_sort$Followup_time>0]
 melanoma_annot_sort <- melanoma_annot_sort[melanoma_annot_sort$Followup_time>0,]
+
+# Check: NK_death (read-based / intra-amplicon models) equals MK_death (death from melanoma, DOC censored) (R2, ToDo A15)
+n_mismatch_death <- sum(melanoma_annot_sort$NK_death != as.numeric(melanoma_annot_sort$MK_death), na.rm = T)
+print(sprintf("Melanoma: %d samples with NK_death != MK_death", n_mismatch_death))
+print(table(melanoma_annot_sort$Outcome, melanoma_annot_sort$NK_death, useNA = "ifany"))
+if (n_mismatch_death > 0){
+  stop("NK_death and MK_death differ for melanoma - decide which endpoint is used (Methods: A15)")
+}
+# expect: 0 mismatches; DOC rows (P14, P15) with NK_death = 0
 
 print(melanoma_annot_sort$Gender)
 print(melanoma_annot_sort$Age)
@@ -555,41 +640,50 @@ melanoma_annot_sort_BS <- melanoma_annot_sort
 
 # cox regression confounders
 # formula_CF <- formula(paste("Surv(Followup_time, MK_death) ~ Gender+Age+Breslow",sep=""))
-formula_CF <- formula(paste("Surv(Followup_time, MK_death) ~ Gender+Age+Run",sep=""))
-# formula_CF <- formula(paste("Surv(Followup_time, MK_death) ~ Gender+Age",sep=""))
+# formula_CF <- formula(paste("Surv(Followup_time, MK_death) ~ Gender+Age+Run",sep=""))
+formula_CF <- formula(paste("Surv(Followup_time, MK_death) ~ Gender+Age",sep=""))
 cn_formula_CF <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_CF))),"+",fixed=TRUE)))
 cox_CF <- coxph(formula_CF, data = melanoma_annot_sort_BS)
 print(summary(cox_CF))
 
 # cox regression msp
-formula_MSP <- formula(paste("Surv(Followup_time, MK_death) ~ Meth+Run",sep=""))
-# formula_MSP <- formula(paste("Surv(Followup_time, MK_death) ~ Meth",sep=""))
+# Non-nested (A14 final 2026-11-13): MSP status only vs base Gender + Age, on the same samples (ToDo A19)
+mask_complete_MSP <- complete.cases(melanoma_annot_sort_BS[,c("Meth","Followup_time","MK_death","Gender","Age")])
+formula_MSP <- formula(paste("Surv(Followup_time, MK_death) ~ Meth",sep=""))
 cn_formula_MSP <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_MSP))),"+",fixed=TRUE)))
-cox_MSP <- coxph(formula_MSP, data = melanoma_annot_sort_BS)
+cox_MSP <- coxph(formula_MSP, data = melanoma_annot_sort_BS[mask_complete_MSP,])
+cox_CF_MSP <- coxph(formula_CF, data = melanoma_annot_sort_BS[mask_complete_MSP,])
 print(summary(cox_MSP))
+# Events per MSP status: all deaths in one MSP group = separation (Delta AIC is then a bound) (R3, ToDo A18)
+print(table(melanoma_annot_sort_BS$Meth, melanoma_annot_sort_BS$MK_death, dnn = c("MSP", "Death melanoma")))
 
 print(sprintf("AIC for baseline model: %s",AIC(cox_CF)))
-print(sprintf("Delta AIC for MSP amplicon: %s",AIC(cox_MSP)-AIC(cox_CF)))
+print(sprintf("Delta AIC for MSP amplicon: %s (n = %d)",AIC(cox_MSP)-AIC(cox_CF_MSP),sum(mask_complete_MSP)))
 
 dat_LY75_ROC_logit_perCpG$logit <- NA
 dat_LY75_ROC_logit_perCpG$AIC <- NA
 dat_LY75_ROC_logit_perCpG$AIC_CF <- AIC(cox_CF)
+dat_LY75_ROC_logit_perCpG$n_samples <- NA
 dat_LY75_ROC_logit_perCpG$est_logit <- NA
 dat_LY75_ROC_logit_perCpG$delta_AIC <- NA
 for (i in 1:nrow(Mval_LY75_sort)){
   melanoma_annot_sort_BS[paste("Meth_CpG_",i,sep="")] <- Mval_LY75_sort[i,]
   
   # cox regression
-  # formula_i <- formula(paste("Surv(Followup_time, MK_death) ~ Meth_CpG_",i,"+Gender+Age+Breslow",sep=""))
-  formula_i <- formula(paste("Surv(Followup_time, MK_death) ~ Meth_CpG_",i,"+Run",sep=""))
-  # formula_i <- formula(paste("Surv(Followup_time, MK_death) ~ Meth_CpG_",i,sep=""))
+  # Non-nested (A14 final 2026-11-13): methylation only vs base Gender + Age, on the same samples (ToDo A19)
+  mask_complete_i <- complete.cases(melanoma_annot_sort_BS[,c(paste("Meth_CpG_",i,sep=""),"Followup_time","MK_death","Gender","Age")])
+  formula_i <- formula(paste("Surv(Followup_time, MK_death) ~ Meth_CpG_",i,sep=""))
   cn_formula_i <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_i))),"+",fixed=TRUE)))
-  cox_BS_i <- coxph(formula_i, data = melanoma_annot_sort_BS)
+  cox_BS_i <- coxph(formula_i, data = melanoma_annot_sort_BS[mask_complete_i,])
   print(summary(cox_BS_i))
   dat_LY75_ROC_logit_perCpG$logit[i] <- -log10(summary(cox_BS_i)$coefficients[1,5])
   dat_LY75_ROC_logit_perCpG$est_logit[i] <- summary(cox_BS_i)$coefficients[1,1]
   
   # ROC BS
+  # Base model on the same samples as the CpG model (mask_complete_i above; ToDo A19)
+  model_CF_i <- coxph(formula_CF, data = melanoma_annot_sort_BS[mask_complete_i,])
+  dat_LY75_ROC_logit_perCpG$AIC_CF[i] <- AIC(model_CF_i)
+  dat_LY75_ROC_logit_perCpG$n_samples[i] <- sum(mask_complete_i)
   dat_LY75_ROC_logit_perCpG$AIC[i] <- AIC(cox_BS_i)
   dat_LY75_ROC_logit_perCpG$delta_AIC[i] <- dat_LY75_ROC_logit_perCpG$AIC[i] - dat_LY75_ROC_logit_perCpG$AIC_CF[i]
   
@@ -651,32 +745,43 @@ cox_CF <- coxph(formula_CF, data = ccRCC_annot_sort_BS)
 print(summary(cox_CF))
 
 # cox regression msp
+# Non-nested (A14 final 2026-11-13): MSP status only vs base Gender + Age, on the same samples (ToDo A19)
+mask_complete_MSP <- complete.cases(ccRCC_annot_sort_BS[,c("Meth","Followup_time","NK_death","Gender","Age")])
 formula_MSP <- formula(paste("Surv(Followup_time, NK_death) ~ Meth",sep=""))
 cn_formula_MSP <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_MSP))),"+",fixed=TRUE)))
-cox_MSP <- coxph(formula_MSP, data = ccRCC_annot_sort_BS)
+cox_MSP <- coxph(formula_MSP, data = ccRCC_annot_sort_BS[mask_complete_MSP,])
+cox_CF_MSP <- coxph(formula_CF, data = ccRCC_annot_sort_BS[mask_complete_MSP,])
 print(summary(cox_MSP))
+# Events per MSP status (R3, ToDo A18)
+print(table(ccRCC_annot_sort_BS$Meth, ccRCC_annot_sort_BS$NK_death, dnn = c("MSP", "Death")))
 
 print(sprintf("AIC for baseline model: %s",AIC(cox_CF)))
-print(sprintf("Delta AIC for MSP amplicon: %s",AIC(cox_MSP)-AIC(cox_CF)))
+print(sprintf("Delta AIC for MSP amplicon: %s (n = %d)",AIC(cox_MSP)-AIC(cox_CF_MSP),sum(mask_complete_MSP)))
 
 dat_GREM1_ROC_logit_perCpG$logit <- NA
 dat_GREM1_ROC_logit_perCpG$AIC <- NA
 dat_GREM1_ROC_logit_perCpG$AIC_CF <- AIC(cox_CF)
+dat_GREM1_ROC_logit_perCpG$n_samples <- NA
 dat_GREM1_ROC_logit_perCpG$est_logit <- NA
 dat_GREM1_ROC_logit_perCpG$delta_AIC <- NA
 for (i in 1:nrow(Mval_GREM1_sort)){
   ccRCC_annot_sort_BS[paste("Meth_CpG_",i,sep="")] <- Mval_GREM1_sort[i,]
   
   # cox regression incl Meth
-  # formula_i <- formula(paste("Surv(Followup_time, NK_death) ~ Meth_CpG_",i,"+Gender+Age+Stage+Size",sep=""))
+  # Non-nested (A14 final 2026-11-13): methylation only vs base Gender + Age, on the same samples (ToDo A19)
+  mask_complete_i <- complete.cases(ccRCC_annot_sort_BS[,c(paste("Meth_CpG_",i,sep=""),"Followup_time","NK_death","Gender","Age")])
   formula_i <- formula(paste("Surv(Followup_time, NK_death) ~ Meth_CpG_",i,sep=""))
   cn_formula_i <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_i))),"+",fixed=TRUE)))
-  cox_BS_i <- coxph(formula_i, data = ccRCC_annot_sort_BS)
+  cox_BS_i <- coxph(formula_i, data = ccRCC_annot_sort_BS[mask_complete_i,])
   print(summary(cox_BS_i))
   dat_GREM1_ROC_logit_perCpG$logit[i] <- -log10(summary(cox_BS_i)$coefficients[1,5])
   dat_GREM1_ROC_logit_perCpG$est_logit[i] <- summary(cox_BS_i)$coefficients[1,1]
 
   # ROC BS
+  # Base model on the same samples as the CpG model (mask_complete_i above; ToDo A19)
+  model_CF_i <- coxph(formula_CF, data = ccRCC_annot_sort_BS[mask_complete_i,])
+  dat_GREM1_ROC_logit_perCpG$AIC_CF[i] <- AIC(model_CF_i)
+  dat_GREM1_ROC_logit_perCpG$n_samples[i] <- sum(mask_complete_i)
   dat_GREM1_ROC_logit_perCpG$AIC[i] <- AIC(cox_BS_i)
   dat_GREM1_ROC_logit_perCpG$delta_AIC[i] <- dat_GREM1_ROC_logit_perCpG$AIC[i] - dat_GREM1_ROC_logit_perCpG$AIC_CF[i]
 }              
@@ -881,19 +986,26 @@ rownames(dat_correl) <- dat_correl$ID
 
 mask_primers_NDRG4 <- (dat_correl[dat_NDRG4_ROC_logit_perCpG$ID,]$dist==0) & (!is.na(dat_correl[dat_NDRG4_ROC_logit_perCpG$ID,]$dist==0))
 
-tiff(paste(project_dir,"NDRG4_AIC.jpg",sep=""),width=2048+512+256,height=1024*2/3)
-par(mfrow=c(2,1))
-plotPlots_AIC(dat_gene=dat_NDRG4_ROC_logit_perCpG,
-              locs_gene=locs_NDRG4, gene="NDRG4",
-              MSP_amplicon=c(58497439,58497541),
-              primer_annot_gene=primer_annot_NDRG4,
-              gene_obj=genes_struct,
-              chrom=as.character(data.frame(locs_NDRG4)[1,1]),
-              transcript_ids=unique(genes_struct$ensembl_transcript_id[genes_struct$external_gene_name=="NDRG4"]),
-              elevate_amplicon=rbind(c(4,2),c(8,2),c(10,1),c(12,1),c(13,2)),
-              primer_mask=mask_primers_NDRG4,
-              max_y=36)
-dev.off()
+# Bitmap as before + vector PDF of the same size in inches (72 dpi), so the layout is identical (R1, ToDo E15)
+for (device_i in c("tiff","pdf")){
+  if (device_i == "tiff"){
+    tiff(paste(project_dir,"NDRG4_AIC.jpg",sep=""),width=2048+512+256,height=1024)
+  } else {
+    cairo_pdf(paste(project_dir,"NDRG4_AIC.pdf",sep=""),width=(2048+512+256)/72,height=(1024)/72) # cairo: Delta glyph (ToDo E20)
+  }
+  par(mfrow=c(2,1))
+  plotPlots_AIC(dat_gene=dat_NDRG4_ROC_logit_perCpG,
+                locs_gene=locs_NDRG4, gene="NDRG4",
+                MSP_amplicon=c(58497439,58497541),
+                primer_annot_gene=primer_annot_NDRG4,
+                gene_obj=genes_struct,
+                chrom=as.character(data.frame(locs_NDRG4)[1,1]),
+                transcript_ids=unique(genes_struct$ensembl_transcript_id[genes_struct$external_gene_name=="NDRG4"]),
+                elevate_amplicon=rbind(c(4,2),c(8,2),c(10,1),c(12,1),c(13,2)),
+                primer_mask=mask_primers_NDRG4,
+                max_y=36)
+  dev.off()
+}
 
 ####################################
 # Plot melanoma (LY75): PROGNOSTIC #
@@ -901,19 +1013,26 @@ dev.off()
 
 mask_primers_LY75 <- (dat_correl[dat_LY75_ROC_logit_perCpG$ID,]$dist==0) & (!is.na(dat_correl[dat_LY75_ROC_logit_perCpG$ID,]$dist==0))
 
-tiff(paste(project_dir,"LY75_AIC.jpg",sep=""),width=2048+512+256,height=1024*2/3)
-par(mfrow=c(2,1))
-plotPlots_AIC(dat_gene=dat_LY75_ROC_logit_perCpG,
-              locs_gene=locs_LY75, gene="LY75",
-              MSP_amplicon=c(160761053,160761124),
-              primer_annot_gene=primer_annot_LY75,
-              gene_obj=genes_struct,
-              chrom=as.character(data.frame(locs_LY75)[1,1]),
-              transcript_ids=unique(genes_struct$ensembl_transcript_id[genes_struct$external_gene_name=="LY75"]),
-              # elevate_amplicon=c(6,2),
-              primer_mask=mask_primers_LY75,
-              max_y=16)
-dev.off()
+# Bitmap as before + vector PDF of the same size in inches (72 dpi), so the layout is identical (R1, ToDo E15)
+for (device_i in c("tiff","pdf")){
+  if (device_i == "tiff"){
+    tiff(paste(project_dir,"LY75_AIC.jpg",sep=""),width=2048+512+256,height=1024*2/3)
+  } else {
+    cairo_pdf(paste(project_dir,"LY75_AIC.pdf",sep=""),width=(2048+512+256)/72,height=(1024*2/3)/72) # cairo: Delta glyph (ToDo E20)
+  }
+  par(mfrow=c(2,1))
+  plotPlots_AIC(dat_gene=dat_LY75_ROC_logit_perCpG,
+                locs_gene=locs_LY75, gene="LY75",
+                MSP_amplicon=c(160761053,160761124),
+                primer_annot_gene=primer_annot_LY75,
+                gene_obj=genes_struct,
+                chrom=as.character(data.frame(locs_LY75)[1,1]),
+                transcript_ids=unique(genes_struct$ensembl_transcript_id[genes_struct$external_gene_name=="LY75"]),
+                # elevate_amplicon=c(6,2),
+                primer_mask=mask_primers_LY75,
+                max_y=16)
+  dev.off()
+}
 
 ##################################
 # Plot ccRCC (GREM1): PROGNOSTIC #
@@ -921,19 +1040,26 @@ dev.off()
 
 mask_primers_GREM1 <- (dat_correl[dat_GREM1_ROC_logit_perCpG$ID,]$dist==0) & (!is.na(dat_correl[dat_GREM1_ROC_logit_perCpG$ID,]$dist==0))
 
-tiff(paste(project_dir,"GREM1_AIC.jpg",sep=""),width=2048+512+256,height=1024*2/3)
-par(mfrow=c(2,1))
-plotPlots_AIC(dat_gene=dat_GREM1_ROC_logit_perCpG,
-          locs_gene=locs_GREM1, gene="GREM1",
-          MSP_amplicon=c(33009978,33010025),
-          primer_annot_gene=primer_annot_GREM1,
-          gene_obj=genes_struct,
-          chrom=as.character(data.frame(locs_GREM1)[1,1]),
-          transcript_ids=unique(genes_struct$ensembl_transcript_id[genes_struct$external_gene_name=="GREM1"]),
-          elevate_amplicon=rbind(c(4,1),c(8,2),c(10,1)),
-          primer_mask=mask_primers_GREM1,
-          max_y=25)
-dev.off()
+# Bitmap as before + vector PDF of the same size in inches (72 dpi), so the layout is identical (R1, ToDo E15)
+for (device_i in c("tiff","pdf")){
+  if (device_i == "tiff"){
+    tiff(paste(project_dir,"GREM1_AIC.jpg",sep=""),width=2048+512+256,height=1024*2/3)
+  } else {
+    cairo_pdf(paste(project_dir,"GREM1_AIC.pdf",sep=""),width=(2048+512+256)/72,height=(1024*2/3)/72) # cairo: Delta glyph (ToDo E20)
+  }
+  par(mfrow=c(2,1))
+  plotPlots_AIC(dat_gene=dat_GREM1_ROC_logit_perCpG,
+            locs_gene=locs_GREM1, gene="GREM1",
+            MSP_amplicon=c(33009978,33010025),
+            primer_annot_gene=primer_annot_GREM1,
+            gene_obj=genes_struct,
+            chrom=as.character(data.frame(locs_GREM1)[1,1]),
+            transcript_ids=unique(genes_struct$ensembl_transcript_id[genes_struct$external_gene_name=="GREM1"]),
+            elevate_amplicon=rbind(c(4,1),c(8,2),c(10,1)),
+            primer_mask=mask_primers_GREM1,
+            max_y=25)
+  dev.off()
+}
 
 ################
 # Checks Johan #
@@ -1013,88 +1139,170 @@ dev.off()
 ######################################
 ######################################
 
-source("/data/homes/louisc/Project_KimSmits/Intra_amplicon_diff_functions.R")
+source(file.path(project_dir,"Intra_amplicon_diff_functions.R"))
 
-# Create directories
-if(!dir.exists("AIC_plots")){dir.create("AIC_plots")}
-if(!dir.exists("AIC_plots/CpG_plots")){dir.create("AIC_plots/CpG_plots")}
+#########################################################################
+# Swap test for differences in clinical value between CpGs (E18)        #
+#########################################################################
+# Null: both CpGs have equal clinical value. M-values z-scored (does not change the AIC), per sample the two values
+# swapped with probability 0.5, pair Delta AIC recomputed. All pairs of target-sequence CpGs within an amplicon.
+# Models: NDRG4 Tissue ~ CpG + Patient_ID; GREM1/LY75 Surv ~ CpG only (non-nested), both CpGs on the same samples.
+# The original permutation test (null: neither CpG is informative) is in TargetedBisulphite_sensitivity.R (comparison).
 
-# all comparisons
+## Define settings
+#####################
+n_swap <- 2000
+cutoff_star <- c(NDRG4 = 0.05, GREM1 = 0.05, LY75 = 0.05) # one cut-off for all genes (Louis 2026-11-16)
+# Amplicon plots (intra_amplicon_plot)
 cex_AIC_plots <- 1.25
-seed_perm <- 42
-fdr_treshold_toplot <- 0.10
 n_bp_add <- -1
+outdir_fig5 <- "AIC_plots_swap/"
+dir.create(outdir_fig5, showWarnings = F, recursive = T)
+pval_cutoff_fig5 <- 0.05
+star_cutoffs_fig5 <- c(0.05, 0.005)
 
-## including primer CpGs
-####################
+## Functions
+#####################
+aic_pair_diff <- function(d, gene, covariates = ""){
+  # Delta AIC = AIC(model CpG_b) - AIC(model CpG_a); warnings (separation, convergence) suppressed, as in the main test
+  # covariates: extra terms for the survival models, e.g. "+Run" (LY75 run sensitivity); "" = CpG only (main analysis)
+  if (gene == "NDRG4"){
+    aic_a <- AIC(suppressWarnings(glm(Tissue ~ CpG_a + Patient_ID, data = d, family = binomial(link="logit"))))
+    aic_b <- AIC(suppressWarnings(glm(Tissue ~ CpG_b + Patient_ID, data = d, family = binomial(link="logit"))))
+  } else {
+    aic_a <- AIC(suppressWarnings(coxph(formula(paste0("Surv(Followup_time, NK_death) ~ CpG_a", covariates)), data = d)))
+    aic_b <- AIC(suppressWarnings(coxph(formula(paste0("Surv(Followup_time, NK_death) ~ CpG_b", covariates)), data = d)))
+  }
+  return(aic_b - aic_a)
+}
 
-#NDRG4
-pval_list_NDRG4 <- perform_AIC_analysis(primer_annot_NDRG4,Mval_NDRG4_sort,CRC_annot_sort,"NDRG4")
+get_CpG_pairs <- function(primer_annot, Mval){
+  # All pairs of CpGs within each amplicon, in the order of the original permutation test (perform_AIC_analysis):
+  # amplicons as in primer_annot, CpGs as in Mval. The order fixes the random streams, so the p-values are reproducible.
+  pairs <- NULL
+  for (k in 1:nrow(primer_annot)){
+    mask_amplicon <- grepl(paste0(primer_annot$name[k],"$"),rownames(Mval))
+    cn_names <- rownames(Mval)[mask_amplicon]
+    if (length(cn_names) < 2){
+      next()
+    }
+    for (i in 1:(length(cn_names)-1)){
+      for (j in (i+1):length(cn_names)){
+        pairs <- rbind(pairs, data.frame(Amplicon = primer_annot$name[k], CpG_1 = cn_names[i], CpG_2 = cn_names[j],
+                                         stringsAsFactors = F))
+      }
+    }
+  }
+  return(pairs)
+}
 
-#GREM1
-pval_list_GREM1 <- perform_AIC_analysis(primer_annot_GREM1,Mval_GREM1_sort,ccRCC_annot_sort,"GREM1")
+build_pair_data <- function(info, gene, cpg_1, cpg_2){
+  # One row per sample: outcome, covariates and the two CpGs (CpG_a, CpG_b), complete cases; cluster = resampling unit
+  dat_r <- data.frame(info$annot[,info$cn], CpG_a = info$Mval[cpg_1,], CpG_b = info$Mval[cpg_2,])
+  dat_r <- dat_r[complete.cases(dat_r),]
+  if (gene == "NDRG4"){
+    dat_r$Tissue <- as.factor(dat_r$Tissue)
+    dat_r$cluster <- dat_r$Patient_ID
+  } else {
+    dat_r$Gender <- as.factor(dat_r$Gender)
+    dat_r$Age <- as.numeric(dat_r$Age)
+    dat_r$Patient_ID <- as.character(1:nrow(dat_r))
+    dat_r$cluster <- dat_r$Patient_ID
+  }
+  return(dat_r)
+}
 
-#LY75
-pval_list_LY75 <- perform_AIC_analysis(primer_annot_LY75,Mval_LY75_sort,melanoma_annot_sort,"LY75")
+swap_pair <- function(b, dat, gene, covariates = ""){
+  mask_swap <- runif(nrow(dat)) < 0.5
+  dat_s <- dat
+  dat_s$CpG_a <- ifelse(mask_swap, dat$CpG_b, dat$CpG_a)
+  dat_s$CpG_b <- ifelse(mask_swap, dat$CpG_a, dat$CpG_b)
+  return(tryCatch(aic_pair_diff(dat_s, gene, covariates), error = function(e){NA}))
+}
 
-# Full table
-part_pval_GREM1 <- cbind(rep(names(pval_list_GREM1)[pval_list_GREM1!="No CpGs"],times=as.numeric(unlist(lapply(pval_list_GREM1,nrow)))),
-                         do.call(rbind,pval_list_GREM1[pval_list_GREM1!="No CpGs"]))
-colnames(part_pval_GREM1) <- c("Amplicon",colnames(part_pval_GREM1[2:ncol(part_pval_GREM1)]))
-rownames(part_pval_GREM1) <- 1:nrow(part_pval_GREM1)
-part_pval_NDRG4 <- cbind(rep(names(pval_list_NDRG4)[pval_list_NDRG4!="No CpGs"],times=as.numeric(unlist(lapply(pval_list_NDRG4,nrow)))),
-                         do.call(rbind,pval_list_NDRG4[pval_list_NDRG4!="No CpGs"]))
-colnames(part_pval_NDRG4) <- c("Amplicon",colnames(part_pval_NDRG4[2:ncol(part_pval_NDRG4)]))
-rownames(part_pval_NDRG4) <- 1:nrow(part_pval_NDRG4)
-part_pval_LY75 <- cbind(rep(names(pval_list_LY75)[pval_list_LY75!="No CpGs"],times=as.numeric(unlist(lapply(pval_list_LY75,nrow)))),
-                        do.call(rbind,pval_list_LY75[pval_list_LY75!="No CpGs"]))
-colnames(part_pval_LY75) <- c("Amplicon",colnames(part_pval_LY75[2:ncol(part_pval_LY75)]))
-rownames(part_pval_LY75) <- 1:nrow(part_pval_LY75)
-                
-pval_total_list <- rbind(part_pval_GREM1,part_pval_NDRG4,part_pval_LY75)
-rownames(pval_total_list) <- 1:nrow(pval_total_list)
-write.table(pval_total_list,file="pval_total_list.txt",col.names=T,row.names=F,quote=F,sep="\t")
+get_pval_list_swap <- function(gene){
+  # Per amplicon a table as returned by perform_AIC_analysis (CpG_1, CpG_2, AIC_1, AIC_2, delta_AIC, pval, fdr),
+  # with the swap p-value as pval and the within-amplicon BH value as fdr
+  res_swap_gene <- res_swap[res_swap$Gene == gene,]
+  pval_list_swap <- list()
+  for (amplicon in unique(res_swap_gene$Amplicon)){
+    mask_amplicon <- res_swap_gene$Amplicon == amplicon
+    res_swap_amplicon <- res_swap_gene[mask_amplicon,]
+    pval_list_swap[[amplicon]] <- data.frame(CpG_1 = res_swap_amplicon$CpG_1, CpG_2 = res_swap_amplicon$CpG_2,
+                                             AIC_1 = NA, AIC_2 = NA, delta_AIC = res_swap_amplicon$delta_AIC_obs,
+                                             pval = res_swap_amplicon$pval_swap, fdr = res_swap_amplicon$fdr_swap_amplicon,
+                                             stringsAsFactors = F)
+  }
+  return(pval_list_swap)
+}
 
-unique(pval_total_list$Amplicon[pval_total_list$fdr<0.10])
-unique(pval_total_list$Amplicon[pval_total_list$pval<0.10])
+## Swap test
+#####################
+primer_CpG_ids <- dat_correl$ID[dat_correl$dist_CpG == 0 & !is.na(dat_correl$dist_CpG)]
+pair_info <- list(NDRG4 = list(Mval = Mval_NDRG4_sort, annot = CRC_annot_sort, cn = c("Tissue","Patient_ID"), primer_annot = primer_annot_NDRG4),
+                  GREM1 = list(Mval = Mval_GREM1_sort, annot = ccRCC_annot_sort, cn = c("Followup_time","NK_death","Gender","Age"), primer_annot = primer_annot_GREM1),
+                  LY75 = list(Mval = Mval_LY75_sort, annot = melanoma_annot_sort, cn = c("Followup_time","NK_death","Gender","Age"), primer_annot = primer_annot_LY75))
+rng_kind_ori <- RNGkind()[1]
+RNGkind("L'Ecuyer-CMRG")
+set.seed(42)
+res_swap <- NULL
+for (gene in names(pair_info)){
+  info <- pair_info[[gene]]
+  pairs <- get_CpG_pairs(info$primer_annot, info$Mval)
+  mask_pairs <- !(pairs$CpG_1 %in% primer_CpG_ids) & !(pairs$CpG_2 %in% primer_CpG_ids)
+  print(sprintf("%s: swap test for %d target-CpG pairs (pairs with a primer CpG removed: %d/%d)", gene, sum(mask_pairs),
+                sum(!mask_pairs), length(mask_pairs)))
+  pairs <- pairs[mask_pairs,]
+  for (r in 1:nrow(pairs)){
+    dat_r <- build_pair_data(info, gene, pairs$CpG_1[r], pairs$CpG_2[r])
+    dat_r$CpG_a <- as.numeric(scale(dat_r$CpG_a))
+    dat_r$CpG_b <- as.numeric(scale(dat_r$CpG_b))
+    obs_r <- aic_pair_diff(dat_r, gene)
+    null_r <- unlist(mclapply(1:n_swap, swap_pair, dat = dat_r, gene = gene, mc.cores = 40))
+    mask_ok <- !is.na(null_r)
+    pval_swap <- mean(abs(null_r[mask_ok]) >= abs(obs_r) - 1e-9)
+    res_swap <- rbind(res_swap, data.frame(Gene = gene, Amplicon = pairs$Amplicon[r], CpG_1 = pairs$CpG_1[r],
+                                           CpG_2 = pairs$CpG_2[r], delta_AIC_obs = obs_r,
+                                           pval_swap = pval_swap, n_swap_ok = sum(mask_ok), stringsAsFactors = F))
+  }
+}
+RNGkind(rng_kind_ori)
+# expect (v18): NDRG4 289, GREM1 204, LY75 260 target-CpG pairs
+res_swap$fdr_swap_amplicon <- ave(res_swap$pval_swap, res_swap$Amplicon, FUN = function(p){p.adjust(p, method = "BH")})
+res_swap$fdr_swap_all <- p.adjust(res_swap$pval_swap, method = "BH")
+write.table(res_swap, "intra_amplicon_swap_test.txt", col.names = T, row.names = F, quote = F, sep = "\t")
 
+# Per amplicon: star if at least one pair has p < cut-off (Figure 4 and Figure 5)
+res_swap$cutoff <- cutoff_star[res_swap$Gene]
+summary_swap <- data.frame(Amplicon = unique(res_swap$Amplicon), stringsAsFactors = F)
+summary_swap$Gene <- sub("_.*", "", summary_swap$Amplicon)
+summary_swap$n_pairs <- sapply(summary_swap$Amplicon, function(x){sum(res_swap$Amplicon == x)})
+summary_swap$min_p_swap <- sapply(summary_swap$Amplicon, function(x){min(res_swap$pval_swap[res_swap$Amplicon == x])})
+summary_swap$n_sig_swap <- sapply(summary_swap$Amplicon, function(x){sum(res_swap$pval_swap[res_swap$Amplicon == x] < res_swap$cutoff[res_swap$Amplicon == x])})
+summary_swap$min_fdr_swap_amplicon <- sapply(summary_swap$Amplicon, function(x){min(res_swap$fdr_swap_amplicon[res_swap$Amplicon == x])})
+summary_swap$star_swap <- summary_swap$n_sig_swap > 0
+print(summary_swap)
+write.table(summary_swap, "intra_amplicon_swap_summary.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+for (gene in unique(summary_swap$Gene)){
+  x <- summary_swap[summary_swap$Gene == gene,]
+  print(sprintf("%s: amplicons with a star %d (of %d); pairs significant %d (of %d; %.0f expected by chance)",
+                gene, sum(x$star_swap), nrow(x), sum(x$n_sig_swap), sum(x$n_pairs), sum(x$n_pairs) * cutoff_star[gene]))
+}
+# expect (v18): NDRG4 8, GREM1 5, LY75 5 amplicons with a star; LY75 6 pairs (13 expected by chance)
 
-# # checks
-# dat_check_GREM1 <- dat_GREM1_ROC_logit_perCpG[,c("ID","AIC")]
-# dat_check_GREM1_pvals <- do.call(rbind,pval_list_GREM1)[!duplicated(do.call(rbind,pval_list_GREM1)$CpG_1),c("CpG_1","AIC_1","pval","fdr")]
-# dat_check_GREM1 <- cbind(dat_check_GREM1,matrix(rep(NA,4*nrow(dat_check_GREM1)),nrow=nrow(dat_check_GREM1)))
-# dat_check_GREM1[dat_check_GREM1$ID%in%dat_check_GREM1_pvals$CpG_1,3:6] <- dat_check_GREM1_pvals 
-# daT_check_GREM1
-# 
-# dat_check_NDRG4 <- dat_NDRG4_ROC_logit_perCpG[,c("ID","AIC")]
-# dat_check_NDRG4_pvals <- do.call(rbind,pval_list_NDRG4)[!duplicated(do.call(rbind,pval_list_NDRG4)$CpG_1),c("CpG_1","AIC_1","pval","fdr")]
-# dat_check_NDRG4 <- cbind(dat_check_NDRG4,matrix(rep(NA,4*nrow(dat_check_NDRG4)),nrow=nrow(dat_check_NDRG4)))
-# dat_check_NDRG4[dat_check_NDRG4$ID%in%dat_check_NDRG4_pvals$CpG_1,3:6] <- dat_check_NDRG4_pvals 
-# dat_check_NDRG4
-# 
-# dat_check_LY75 <- dat_LY75_ROC_logit_perCpG[,c("ID","AIC")]
-# dat_check_LY75_pvals <- do.call(rbind,pval_list_LY75)[!duplicated(do.call(rbind,pval_list_LY75)$CpG_1),c("CpG_1","AIC_1","pval","fdr")]
-# dat_check_LY75 <- cbind(dat_check_LY75,matrix(rep(NA,4*nrow(dat_check_LY75)),nrow=nrow(dat_check_LY75)))
-# dat_check_LY75[dat_check_LY75$ID%in%dat_check_LY75_pvals$CpG_1,3:6] <- dat_check_LY75_pvals 
-# dat_check_LY75
-
-## excluding primer CpGs
-####################
-
-# unlink("AIC_plots_red/*")
-if(!dir.exists("AIC_plots_red")){dir.create("AIC_plots_red")}
-
-#source("/data/homes/louisc/Project_KimSmits/Intra_amplicon_diff_functions.R")
-
-pval_cutoff_red <- 0.05
-
-reduced_AIC_analysis("GREM1",pval_list_GREM1,pval_cutoff_red,dat_GREM1_ROC_logit_perCpG)
-
-reduced_AIC_analysis("NDRG4",pval_list_NDRG4,pval_cutoff_red,dat_NDRG4_ROC_logit_perCpG)
-
-pval_cutoff_red <- 0.10
-
-reduced_AIC_analysis("LY75",pval_list_LY75,pval_cutoff_red,dat_LY75_ROC_logit_perCpG)
+#########################################################
+# Figure 5: intra-amplicon differences, swap test (E18) #
+#########################################################
+# Stars from the swap test (target-sequence CpG pairs, unadjusted p): * p < 0.05, ** p < 0.005, one cut-off for all
+# genes (Louis 2026-11-16).
+for (gene in c("NDRG4","GREM1","LY75")){
+  pval_list_swap <- get_pval_list_swap(gene)
+  dat_AIC_gene <- get(paste0("dat_",gene,"_ROC_logit_perCpG"))
+  reduced_AIC_analysis(gene, pval_list_swap, pval_cutoff_fig5, dat_AIC_gene, star_cutoffs = star_cutoffs_fig5, dir = outdir_fig5)
+}
+n_fig5 <- length(list.files(outdir_fig5, pattern = "jpg$"))
+print(sprintf("Figure 5 (swap test): %d amplicon plots in %s", n_fig5, outdir_fig5))
+# expect: 18 (8 NDRG4, 5 GREM1, 5 LY75)
 
 ####################################
 ####################################
@@ -1124,7 +1332,7 @@ for (i in 1:length(dupl_CpG_GREM1)){
                               c("GREM1",dupl_CpG_GREM1[i],
                                 gsub(paste0(dupl_CpG_GREM1[i],"_"),"",rownames(dat_dupl_CpG_GREM1)),
                                 data.frame(locs_GREM1)$av_cov[data.frame(locs_GREM1)$seqnames==gsub("_.+$","",dupl_CpG_GREM1[i]) & data.frame(locs_GREM1)$start==gsub("^.+_","",dupl_CpG_GREM1[i])],
-                                t.test(dat_dupl_CpG_GREM1[1,],dat_dupl_CpG_GREM1[2,])$p.val,
+                                t.test(dat_dupl_CpG_GREM1[1,],dat_dupl_CpG_GREM1[2,],paired=TRUE)$p.val,
                                 mean(beta_dupl_CpG_GREM1[1,],na.rm=T),mean(beta_dupl_CpG_GREM1[2,],na.rm=T),
                                 mean(beta_dupl_CpG_GREM1[1,],na.rm=T)-mean(beta_dupl_CpG_GREM1[2,],na.rm=T)))
 }
@@ -1138,7 +1346,7 @@ for (i in 1:length(dupl_CpG_LY75)){
                         c("LY75",dupl_CpG_LY75[i],
                           gsub(paste0(dupl_CpG_LY75[i],"_"),"",rownames(dat_dupl_CpG_LY75)),
                           data.frame(locs_LY75)$av_cov[data.frame(locs_LY75)$seqnames==gsub("_.+$","",dupl_CpG_LY75[i]) & data.frame(locs_LY75)$start==gsub("^.+_","",dupl_CpG_LY75[i])],
-                          t.test(dat_dupl_CpG_LY75[1,],dat_dupl_CpG_LY75[2,])$p.val,
+                          t.test(dat_dupl_CpG_LY75[1,],dat_dupl_CpG_LY75[2,],paired=TRUE)$p.val,
                           mean(beta_dupl_CpG_LY75[1,],na.rm=T),mean(beta_dupl_CpG_LY75[2,],na.rm=T),
                           mean(beta_dupl_CpG_LY75[1,],na.rm=T)-mean(beta_dupl_CpG_LY75[2,],na.rm=T)))
 }
@@ -1152,7 +1360,7 @@ for (i in 1:length(dupl_CpG_NDRG4)){
                         c("NDRG4",dupl_CpG_NDRG4[i],
                           gsub(paste0(dupl_CpG_NDRG4[i],"_"),"",rownames(dat_dupl_CpG_NDRG4)),
                           data.frame(locs_NDRG4)$av_cov[data.frame(locs_NDRG4)$seqnames==gsub("_.+$","",dupl_CpG_NDRG4[i]) & data.frame(locs_NDRG4)$start==gsub("^.+_","",dupl_CpG_NDRG4[i])],
-                          t.test(dat_dupl_CpG_NDRG4[1,],dat_dupl_CpG_NDRG4[2,])$p.val,
+                          t.test(dat_dupl_CpG_NDRG4[1,],dat_dupl_CpG_NDRG4[2,],paired=TRUE)$p.val,
                           mean(beta_dupl_CpG_NDRG4[1,],na.rm=T),mean(beta_dupl_CpG_NDRG4[2,],na.rm=T),
                           mean(beta_dupl_CpG_NDRG4[1,],na.rm=T)-mean(beta_dupl_CpG_NDRG4[2,],na.rm=T)))
 }
@@ -1160,6 +1368,8 @@ res_dupl_CpG <- data.frame(res_dupl_CpG)
 colnames(res_dupl_CpG) <- c("Gene","CpG","Amplicon1","Amplicon2","A1_av_cov","A2_av_cov","pval","A1_av_meth","A2_av_meth","diff_meth")
 res_dupl_CpG$pval <- as.numeric(res_dupl_CpG$pval)
 res_dupl_CpG$diff_meth <- as.numeric(res_dupl_CpG$diff_meth)
+res_dupl_CpG$fdr <- p.adjust(res_dupl_CpG$pval, method = "BH")
+print(sprintf("Overlapping CpGs with FDR < 0.05: %d/%d", sum(res_dupl_CpG$fdr < 0.05), nrow(res_dupl_CpG)))
 write.table(res_dupl_CpG,file="res_dupl_CpG.txt",col.names = T,row.names = F,quote = F,sep="\t")
 
 res_dupl_CpG$A1_fwd_meth <- NA
@@ -1195,8 +1405,6 @@ res_dupl_CpG$A1_deltaAIC <- NA
 res_dupl_CpG$A2_deltaAIC <- NA
 res_dupl_CpG$A1_dist_to_primer_CpG <- NA
 res_dupl_CpG$A2_dist_to_primer_CpG <- NA
-res_dupl_cpG$A1_av_meth <- NA
-res_dupl_cpG$A2_av_meth <- NA
 for (i in 1:nrow(res_dupl_CpG)){
   dat_i <- get(paste0("dat_",res_dupl_CpG$Gene[i],"_ROC_logit_perCpG"))
 
@@ -1208,6 +1416,31 @@ for (i in 1:nrow(res_dupl_CpG)){
 }
 
 write.table(res_dupl_CpG,file="res_dupl_CpG.txt",col.names = T,row.names = F,quote = F,sep="\t")
+
+## Position-matched check (R3.M1): same CpG, amplicons with a different number of primers containing CpGs (R7, ToDo A2)
+#####################
+
+res_dupl_CpG$A1_CG_qual <- as.numeric(as.character(dat_correl[paste(res_dupl_CpG$CpG,res_dupl_CpG$Amplicon1,sep="_"),"CG_qual"]))
+res_dupl_CpG$A2_CG_qual <- as.numeric(as.character(dat_correl[paste(res_dupl_CpG$CpG,res_dupl_CpG$Amplicon2,sep="_"),"CG_qual"]))
+
+# Only CpGs that are a target CpG (not in a primer) in both amplicons, and amplicons that differ in CG_qual
+mask_target_both <- (res_dupl_CpG$A1_dist_to_primer_CpG != 0 | is.na(res_dupl_CpG$A1_dist_to_primer_CpG)) &
+  (res_dupl_CpG$A2_dist_to_primer_CpG != 0 | is.na(res_dupl_CpG$A2_dist_to_primer_CpG))
+mask_diff_qual <- res_dupl_CpG$A1_CG_qual != res_dupl_CpG$A2_CG_qual
+res_matched <- res_dupl_CpG[mask_target_both & mask_diff_qual, ]
+print(sprintf("Position-matched target CpGs (different number of primers with CpGs): %d", nrow(res_matched)))
+
+# Delta AIC in the amplicon with MORE primers containing CpGs vs FEWER
+mask_A1_more <- res_matched$A1_CG_qual > res_matched$A2_CG_qual
+res_matched$dAIC_more <- ifelse(mask_A1_more, res_matched$A1_deltaAIC, res_matched$A2_deltaAIC)
+res_matched$dAIC_fewer <- ifelse(mask_A1_more, res_matched$A2_deltaAIC, res_matched$A1_deltaAIC)
+print(res_matched[, c("Gene","CpG","Amplicon1","Amplicon2","A1_CG_qual","A2_CG_qual","dAIC_more","dAIC_fewer")])
+print(sprintf("More primers with CpGs gives lower Delta AIC for %d/%d CpGs", sum(res_matched$dAIC_more < res_matched$dAIC_fewer), nrow(res_matched)))
+if (nrow(res_matched) >= 5){
+  print(wilcox.test(res_matched$dAIC_more, res_matched$dAIC_fewer, paired = TRUE, exact = F))
+}
+write.table(res_matched, file = "res_dupl_CpG_position_matched.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+# Note: NDRG4 CpGs at the Delta AIC floor (R4) give ties here - report them as such.
 
 
 ################################
@@ -1240,7 +1473,7 @@ sum(((dat_correl$dist != 0) | is.na(dat_correl$dist)) & (dat_correl$CG_qual==1))
 sum(((dat_correl$dist != 0) | is.na(dat_correl$dist)) & (dat_correl$CG_qual==2))
 
 # deltaAIC ifo quantitative presence of CpG in primer sequence
-jpeg("/data/homes/louisc/Project_KimSmits/violin_deltaAIC_CpG_quant.jpg")
+jpeg(file.path(project_dir,"violin_deltaAIC_CpG_quant.jpg"))
 g <- ggplot(dat_correl_not_in_primer, aes(x=deltaAIC, y=CG_quant)) + 
   geom_violin(trim=FALSE) + 
   theme(axis.text.x= element_text(size=14),
@@ -1249,7 +1482,7 @@ print(g)
 dev.off()
 
 # deltaAIC ifo presence of CpG in primer sequence
-jpeg("/data/homes/louisc/Project_KimSmits/violin_deltaAIC_CpG_qual.jpg")
+jpeg(file.path(project_dir,"violin_deltaAIC_CpG_qual.jpg"))
 g <- ggplot(dat_correl_not_in_primer, aes(x=deltaAIC, y=CG_qual)) + 
   geom_violin(trim=FALSE) + 
   theme(axis.text.x= element_text(size=14),
@@ -1263,6 +1496,127 @@ t.test(dat_correl_not_in_primer$deltaAIC[dat_correl_not_in_primer$CG_qual==0],
 
 t.test(dat_correl_not_in_primer$deltaAIC[dat_correl_not_in_primer$CG_qual==0],
        dat_correl_not_in_primer$deltaAIC[dat_correl_not_in_primer$CG_qual==2])
+
+## CpG density covariate (R3.M1: primer CpGs vs genomic position; R8, ToDo A2/E2)
+#####################
+
+window_half <- 50
+CpG_ref <- data.frame(fread(file.path(project_dir,"wgbs_tools/references/hg37_87/CpG.bed.gz"),header=F))
+colnames(CpG_ref) <- c("chr","pos","id")
+CpG_ref$chr <- gsub("chr","",CpG_ref$chr)
+
+dat_correl$chr <- sapply(strsplit(dat_correl$ID,"_"), function(x){x[1]})
+dat_correl$pos <- as.numeric(sapply(strsplit(dat_correl$ID,"_"), function(x){x[2]}))
+
+# Coordinate check: every analysed CpG must be a CpG in the reference
+mask_found <- paste(dat_correl$chr, dat_correl$pos) %in% paste(CpG_ref$chr, CpG_ref$pos)
+print(sprintf("Analysed CpGs found in the CpG reference: %d/%d", sum(mask_found), length(mask_found)))
+# expect: all (otherwise the reference uses another position convention, e.g. 0-based)
+
+dat_correl$cpg_per_100bp <- NA
+for (chr_j in unique(dat_correl$chr)){
+  mask_chr_j <- dat_correl$chr == chr_j
+  # Only reference CpGs around the analysed region (large speed-up, same result)
+  mask_ref_j <- CpG_ref$chr == chr_j &
+    CpG_ref$pos >= min(dat_correl$pos[mask_chr_j]) - window_half &
+    CpG_ref$pos <= max(dat_correl$pos[mask_chr_j]) + window_half
+  pos_ref_j <- CpG_ref$pos[mask_ref_j]
+  dat_correl$cpg_per_100bp[mask_chr_j] <- sapply(dat_correl$pos[mask_chr_j], function(p){
+    sum(abs(pos_ref_j - p) <= window_half)
+  }) / (2 * window_half + 1) * 100
+}
+
+dat_correl$gene <- sapply(strsplit(dat_correl$ID,"_"), function(x){x[3]})
+dat_correl_not_in_primer <- dat_correl[(dat_correl$dist != 0) | is.na(dat_correl$dist),]
+
+# Primer-CpG effect with and without adjustment for local CpG density (gene as covariate: different scales)
+print(summary(lm(deltaAIC ~ CG_qual + gene, data = dat_correl_not_in_primer)))
+print(summary(lm(deltaAIC ~ CG_qual + cpg_per_100bp + gene, data = dat_correl_not_in_primer)))
+print(cor.test(dat_correl_not_in_primer$cpg_per_100bp, as.numeric(as.character(dat_correl_not_in_primer$CG_qual)), method = "spearman", exact = F))
+
+## CpG density per gene region + profile with amplicons (R3.M1; was scripts/cpg_density.R + plot_cpg_density.R)
+#####################
+# Reference CpGs (CpG_ref, wgbs_tools CpG.bed: position of the C) per gene region; profile = CpGs per 100 bp in a
+# sliding window of 2*window_half+1 bp, evaluated only where the window lies completely within the region.
+# Regions as in the rebuttal figure (GRCh37); amplicons below the profile (3 rows, so overlapping amplicons stay visible).
+step_density <- 10
+regions_density <- data.frame(gene = c("NDRG4","GREM1","LY75"), chr = c("16","15","2"),
+                              start = c(58495000, 33008500, 160760600), end = c(58500000, 33011500, 160761800),
+                              stringsAsFactors = F)
+outdir_density <- file.path(project_dir, "AIC_plots")
+dir.create(outdir_density, showWarnings = F, recursive = T)
+outfile_density_regions <- file.path(project_dir, "cpg_density_regions.txt")
+outfile_density_profile <- file.path(project_dir, "cpg_density_profile.txt")
+outfile_density_plot <- file.path(outdir_density, "cpg_density_profile.pdf")
+line_colour_density <- "#2a78d6"
+fill_colour_density <- "#cde2fb"
+
+region_density <- NULL
+profile_density <- NULL
+cpg_density_ticks <- NULL
+amplicons_density <- NULL
+for (k in 1:nrow(regions_density)){
+  gene_k <- regions_density$gene[k]
+  start_k <- regions_density$start[k]
+  end_k <- regions_density$end[k]
+  length_k <- end_k - start_k + 1
+
+  ### Reference CpGs in the region
+  mask_ref_k <- CpG_ref$chr == regions_density$chr[k] & CpG_ref$pos >= start_k & CpG_ref$pos <= end_k
+  pos_ref_k <- CpG_ref$pos[mask_ref_k]
+  region_density <- rbind(region_density, data.frame(gene = gene_k, chr = regions_density$chr[k], start = start_k,
+                                                     end = end_k, length = length_k, n_cpg = length(pos_ref_k),
+                                                     cpg_per_100bp = length(pos_ref_k) / length_k * 100,
+                                                     stringsAsFactors = F))
+  cpg_density_ticks <- rbind(cpg_density_ticks, data.frame(gene = gene_k, pos = pos_ref_k, stringsAsFactors = F))
+
+  ### Sliding-window profile
+  centres_k <- seq(start_k + window_half, end_k - window_half, by = step_density)
+  n_cpg_k <- sapply(centres_k, function(centre){
+    sum(abs(pos_ref_k - centre) <= window_half)
+  })
+  profile_density <- rbind(profile_density, data.frame(gene = gene_k, pos = centres_k,
+                                                       cpg_per_100bp = n_cpg_k / (2 * window_half + 1) * 100,
+                                                       stringsAsFactors = F))
+
+  ### Amplicons of the gene, sorted by start, stacked on 3 rows
+  amplicons_k <- primer_annot_list[[gene_k]][,c("name","begin","end")]
+  amplicons_k$begin <- as.numeric(amplicons_k$begin)
+  amplicons_k$end <- as.numeric(amplicons_k$end)
+  amplicons_k <- amplicons_k[sort(amplicons_k$begin, index.return = TRUE)$ix,]
+  mask_outside_k <- amplicons_k$begin < start_k | amplicons_k$end > end_k
+  if (sum(mask_outside_k) > 0){
+    print(sprintf("%s: amplicons (partly) outside the density region: %s", gene_k, paste(amplicons_k$name[mask_outside_k], collapse = ", ")))
+  }
+  amplicons_k$row <- (0:(nrow(amplicons_k) - 1)) %% 3
+  amplicons_density <- rbind(amplicons_density, data.frame(gene = gene_k, amplicons_k, stringsAsFactors = F))
+}
+print(region_density)
+# expect: n_cpg NDRG4 285, GREM1 237, LY75 89 (rebuttal figure, counted on the GRCh37 sequence)
+write.table(region_density, outfile_density_regions, col.names = T, row.names = F, quote = F, sep = "\t")
+write.table(profile_density, outfile_density_profile, col.names = T, row.names = F, quote = F, sep = "\t")
+
+# Amplicons drawn below 0, one row per 0.8 CpG/100 bp
+amplicons_density$y <- -0.8 - 0.8 * amplicons_density$row
+profile_density$gene <- factor(profile_density$gene, levels = regions_density$gene)
+cpg_density_ticks$gene <- factor(cpg_density_ticks$gene, levels = regions_density$gene)
+amplicons_density$gene <- factor(amplicons_density$gene, levels = regions_density$gene)
+
+g <- ggplot(profile_density, aes(x = pos / 1e3, y = cpg_per_100bp)) +
+  geom_area(fill = fill_colour_density) +
+  geom_line(colour = line_colour_density, linewidth = 0.6) +
+  geom_rug(data = cpg_density_ticks, aes(x = pos / 1e3), inherit.aes = F, sides = "t", colour = "grey40",
+           linewidth = 0.2, length = unit(0.03, "npc")) +
+  geom_segment(data = amplicons_density, aes(x = begin / 1e3, xend = end / 1e3, y = y, yend = y), inherit.aes = F,
+               colour = "grey30", linewidth = 1.5) +
+  facet_wrap(~ gene, ncol = 1, scales = "free") +
+  labs(x = "Position (kb, GRCh37)", y = "CpGs per 100 bp") +
+  theme_classic(base_size = 9) +
+  theme(strip.background = element_blank(), strip.text = element_text(face = "bold.italic", hjust = 0),
+        panel.grid.major.y = element_line(colour = "grey90", linewidth = 0.3))
+pdf(outfile_density_plot, width = 7, height = 6.6)
+print(g)
+dev.off()
  
 
 # Select target specific CpGs that have at least one primer-specific CpGs in one of their primers
@@ -1270,7 +1624,7 @@ dat_correl_filt <- dat_correl[(dat_correl$CG_qual!=0) & (dat_correl$dist!=0) & (
 dim(dat_correl_filt)
 
 # deltaAIC ifo deviation of 50% average DNA methylation
-jpeg("/data/homes/louisc/Project_KimSmits/correl_deltaAIC_diffmeth.jpg")
+jpeg(file.path(project_dir,"correl_deltaAIC_diffmeth.jpg"))
 g <- ggplot(dat_correl_filt[!(dat_correl_filt$dist==0),], aes(x=diff_meth, y=deltaAIC)) + 
   geom_point()+ 
   geom_smooth(method=lm)
@@ -1281,7 +1635,7 @@ cor.test(dat_correl_filt[!(dat_correl_filt$dist==0),]$diff_meth,
          dat_correl_filt[!(dat_correl_filt$dist==0),]$deltaAIC)
                          
 # deltaAIC ifo distance to nearest primer
-jpeg("/data/homes/louisc/Project_KimSmits/correl_deltaAIC_dist.jpg")
+jpeg(file.path(project_dir,"correl_deltaAIC_dist.jpg"))
 g <- ggplot(dat_correl_filt[!(dat_correl_filt$dist==0),], aes(x=dist_CpG, y=deltaAIC)) + 
   geom_point()+ 
   geom_smooth(method=lm)  + 
@@ -1295,7 +1649,7 @@ cor.test(dat_correl_filt[!(dat_correl_filt$dist==0),]$dist_CpG,
 
 
 # deltaAIC ifo difference in DNA methylation of nearest primer CpG
-jpeg("/data/homes/louisc/Project_KimSmits/correl_deltaAIC_diffmeth_nearestprimerCpG.jpg")
+jpeg(file.path(project_dir,"correl_deltaAIC_diffmeth_nearestprimerCpG.jpg"))
 g <- ggplot(dat_correl_filt[!(dat_correl_filt$dist==0),], aes(x=abs(av_meth_primer_CpG-0.5), y=deltaAIC)) + 
   geom_point()+ 
   geom_smooth(method=lm) + 
@@ -1307,9 +1661,8 @@ dev.off()
 cor.test(abs(dat_correl_filt[!(dat_correl_filt$dist==0),]$av_meth_primer_CpG-0.5),
          dat_correl_filt[!(dat_correl_filt$dist==0),]$deltaAIC)
 
-
 # deltaAIC ifo average methylation rate
-jpeg("/data/homes/louisc/Project_KimSmits/correl_deltaAIC_avMeth.jpg")
+jpeg(file.path(project_dir,"correl_deltaAIC_avMeth.jpg"))
 g <- ggplot(dat_correl, aes(x=av_meth_CpG, y=deltaAIC)) + 
   geom_point()+
   geom_smooth(method=lm)
@@ -1321,6 +1674,12 @@ cor.test(dat_correl$av_meth_CpG,dat_correl$deltaAIC)
 
 (paste(res_dupl_CpG$CpG,res_dupl_CpG$Amplicon1,sep="_") %in% dat_correl$ID[dat_correl$dist_CpG==0 & !is.na(dat_correl$dist_CpG)]) | (paste(res_dupl_CpG$CpG,res_dupl_CpG$Amplicon2,sep="_") %in% dat_correl$ID[dat_correl$dist_CpG==0 & !
 is.na(dat_correl$dist_CpG)])
+
+# Recount "10 of 12" (manuscript) vs 11 (R3) (R6, ToDo E7)
+mask_dupl_in_primer <- (paste(res_dupl_CpG$CpG,res_dupl_CpG$Amplicon1,sep="_") %in% dat_correl$ID[dat_correl$dist_CpG==0 & !is.na(dat_correl$dist_CpG)]) |
+  (paste(res_dupl_CpG$CpG,res_dupl_CpG$Amplicon2,sep="_") %in% dat_correl$ID[dat_correl$dist_CpG==0 & !is.na(dat_correl$dist_CpG)])
+print(sprintf("Significant discordant CpGs located in a primer: %d/%d",
+              sum(mask_dupl_in_primer & res_dupl_CpG$fdr < 0.05), sum(res_dupl_CpG$fdr < 0.05)))
 
 
 ###############################
@@ -1340,9 +1699,9 @@ is.na(dat_correl$dist_CpG)])
 # Extract read based data from wgbs_tools .pat files #
 ######################################################
 
-setwd("/data/homes/louisc/Project_KimSmits")
+setwd(project_dir)
 
-CpG_info_wgbstools <- data.frame(fread("/data/homes/louisc/Project_KimSmits/wgbs_tools/references/hg37_87/CpG.bed.gz",header=F))
+CpG_info_wgbstools <- data.frame(fread(file.path(project_dir,"wgbs_tools/references/hg37_87/CpG.bed.gz"),header=F))
 colnames(CpG_info_wgbstools) <- c("chr","pos","id")
 
 if(!dir.exists("waterfall_plots")){dir.create("waterfall_plots")}
@@ -1506,7 +1865,6 @@ order_NDRG4 <- CRC_annot_sort$Sample_ID[sort(as.character(CRC_annot_sort$Tissue)
 for (i in 1:length(order_NDRG4)){
   order_NDRG4[i] <- sample_annot$Sample_ID[sample_annot$CRC==order_NDRG4[i]]
 }
-order <- list(order_GREM1,order_LY75,order_NDRG4)
 # Orders of plots - prognostic
 ccRCC_annot_sort$surv <- Surv(ccRCC_annot_sort$Followup_time, ccRCC_annot_sort$NK_death)
 order_GREM1 <- gsub(" ","",as.character(sort(ccRCC_annot_sort$surv)))
@@ -1537,6 +1895,8 @@ for (i in 1:length(order_LY75)){
   }
   order_LY75[i] <- sample_annot$Sample_ID[sample_annot$melanoma==order_LY75[i]]
 }
+# All orders defined: list moved here from before the prognostic orders (object not found in a fresh session)
+order <- list(order_GREM1,order_LY75,order_NDRG4)
 # order_LY75<- sort(as.numeric(melanoma_annot_sort$Followup_time))
 # for (i in 1:length(order_LY75)){
 #   order_LY75[i] <- melanoma_annot_sort$Sample_ID[as.numeric(melanoma_annot_sort$Followup_time)==order_LY75[i]]
@@ -1560,7 +1920,8 @@ plot_paper <- FALSE
 for (amplicon in amplicons){
   print(sprintf("Plotting for %s",amplicon))
 
-  jpeg(paste0("waterfall_plots/",amplicon,".jpg"),width=256*10.5,height=256*6)
+  # Vector image (R1, ToDo E15): pdf of the same size in inches as the former 72-dpi jpeg
+  pdf(paste0("waterfall_plots/",amplicon,".pdf"),width=256*10.5/72,height=256*6/72)
   par(mfrow=c(4,7))
 
   if(grepl("LY75",amplicon)){
@@ -1878,7 +2239,7 @@ avAIC_table_ext$rbAIC_sur <- NA
 avAIC_table_ext$rbAIC_hybr <- NA
 
 # RB AIC NDRG4
-formula_CF <- formula(paste("Tissue ~ Gender+Age+Patient_ID",sep=""))
+formula_CF <- formula(paste("Tissue ~ Patient_ID",sep=""))
 model_CF <- glm(formula_CF, 
                 data = CRC_annot_sort_BS, 
                 family = binomial(link="logit"))
@@ -1913,14 +2274,22 @@ for (amplicon in amplicons_NDRG4){
                   family = binomial(link="logit"))
   # print(summary(model_new2)$coefficients["meth_state2",4])
   # print(AIC(model_new2) - AIC(model_CF))
+  # Base model on the samples with read-based values (ToDo A19)
+  mask_complete_rb <- complete.cases(CRC_annot_sort[,c("meth_state","meth_state2","Tissue","Patient_ID")])
+  model_CF_rb <- glm(formula_CF, data = CRC_annot_sort[mask_complete_rb,], family = binomial(link="logit"))
+  print(sprintf("%s read-based: %d/%d samples", amplicon, sum(mask_complete_rb), length(mask_complete_rb)))
+  # Read-based models refitted on the same samples as the base model (ToDo A19)
+  model_new <- glm(formula(model_new), data = CRC_annot_sort[mask_complete_rb,], family = binomial(link="logit"))
+  model_new2 <- glm(formula(model_new2), data = CRC_annot_sort[mask_complete_rb,], family = binomial(link="logit"))
+  model_new3 <- glm(formula(model_new3), data = CRC_annot_sort[mask_complete_rb,], family = binomial(link="logit"))
   AIC_NDRG4_rb <- rbind(AIC_NDRG4_rb,c(amplicon,
-                                       AIC(model_new) - AIC(model_CF),
-                                       AIC(model_new2) - AIC(model_CF),
-                                       AIC(model_new3) - AIC(model_CF),
+                                       AIC(model_new) - AIC(model_CF_rb),
+                                       AIC(model_new2) - AIC(model_CF_rb),
+                                       AIC(model_new3) - AIC(model_CF_rb),
                                        (as.numeric(primer_annot$end[primer_annot$name==amplicon])+as.numeric(primer_annot$begin[primer_annot$name==amplicon]))/2))
-  avAIC_table_ext$rbAIC[avAIC_table_ext$AmpliconID==amplicon] <- AIC(model_new) - AIC(model_CF)
-  avAIC_table_ext$rbAIC_sur[avAIC_table_ext$AmpliconID==amplicon] <- AIC(model_new2) - AIC(model_CF)
-  avAIC_table_ext$rbAIC_hybr[avAIC_table_ext$AmpliconID==amplicon] <- AIC(model_new3) - AIC(model_CF)
+  avAIC_table_ext$rbAIC[avAIC_table_ext$AmpliconID==amplicon] <- AIC(model_new) - AIC(model_CF_rb)
+  avAIC_table_ext$rbAIC_sur[avAIC_table_ext$AmpliconID==amplicon] <- AIC(model_new2) - AIC(model_CF_rb)
+  avAIC_table_ext$rbAIC_hybr[avAIC_table_ext$AmpliconID==amplicon] <- AIC(model_new3) - AIC(model_CF_rb)
 }
 AIC_NDRG4_rb
 
@@ -1951,14 +2320,22 @@ for (amplicon in amplicons_LY75){
   formula_new <- formula(paste("Surv(Followup_time, NK_death) ~ meth_state + meth_state2",sep=""))
   cox_new3<- coxph(formula_new, 
                   data = melanoma_annot_sort)
+  # Base model on the samples with read-based values (ToDo A19)
+  mask_complete_rb <- complete.cases(melanoma_annot_sort[,c("meth_state","meth_state2","Followup_time","NK_death","Gender","Age")])
+  cox_CF_rb <- coxph(formula_CF, data = melanoma_annot_sort[mask_complete_rb,])
+  print(sprintf("%s read-based: %d/%d samples", amplicon, sum(mask_complete_rb), length(mask_complete_rb)))
+  # Read-based models refitted on the same samples as the base model (ToDo A19)
+  cox_new <- coxph(formula(cox_new), data = melanoma_annot_sort[mask_complete_rb,])
+  cox_new2 <- coxph(formula(cox_new2), data = melanoma_annot_sort[mask_complete_rb,])
+  cox_new3 <- coxph(formula(cox_new3), data = melanoma_annot_sort[mask_complete_rb,])
   AIC_LY75_rb <- rbind(AIC_LY75_rb,c(amplicon,
-                                     AIC(cox_new) - AIC(cox_CF),
-                                     AIC(cox_new2) - AIC(cox_CF),
-                                     AIC(cox_new3) - AIC(cox_CF),
+                                     AIC(cox_new) - AIC(cox_CF_rb),
+                                     AIC(cox_new2) - AIC(cox_CF_rb),
+                                     AIC(cox_new3) - AIC(cox_CF_rb),
                                      (as.numeric(primer_annot$end[primer_annot$name==amplicon])+as.numeric(primer_annot$begin[primer_annot$name==amplicon]))/2))
-  avAIC_table_ext$rbAIC[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new) - AIC(cox_CF)
-  avAIC_table_ext$rbAIC_sur[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new2) - AIC(cox_CF)
-  avAIC_table_ext$rbAIC_hybr[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new3) - AIC(cox_CF)
+  avAIC_table_ext$rbAIC[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new) - AIC(cox_CF_rb)
+  avAIC_table_ext$rbAIC_sur[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new2) - AIC(cox_CF_rb)
+  avAIC_table_ext$rbAIC_hybr[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new3) - AIC(cox_CF_rb)
 }
 AIC_LY75_rb
 
@@ -1989,18 +2366,110 @@ for (amplicon in amplicons_GREM1){
   formula_new <- formula(paste("Surv(Followup_time, NK_death) ~ meth_state + meth_state2",sep=""))
   cox_new3<- coxph(formula_new, 
                   data = ccRCC_annot_sort)
+  # Base model on the samples with read-based values (ToDo A19)
+  mask_complete_rb <- complete.cases(ccRCC_annot_sort[,c("meth_state","meth_state2","Followup_time","NK_death","Gender","Age")])
+  cox_CF_rb <- coxph(formula_CF, data = ccRCC_annot_sort[mask_complete_rb,])
+  print(sprintf("%s read-based: %d/%d samples", amplicon, sum(mask_complete_rb), length(mask_complete_rb)))
+  # Read-based models refitted on the same samples as the base model (ToDo A19)
+  cox_new <- coxph(formula(cox_new), data = ccRCC_annot_sort[mask_complete_rb,])
+  cox_new2 <- coxph(formula(cox_new2), data = ccRCC_annot_sort[mask_complete_rb,])
+  cox_new3 <- coxph(formula(cox_new3), data = ccRCC_annot_sort[mask_complete_rb,])
   AIC_GREM1_rb <- rbind(AIC_GREM1_rb,c(amplicon,
-                                       AIC(cox_new) - AIC(cox_CF),
-                                       AIC(cox_new2) - AIC(cox_CF),
-                                       AIC(cox_new3) - AIC(cox_CF),
+                                       AIC(cox_new) - AIC(cox_CF_rb),
+                                       AIC(cox_new2) - AIC(cox_CF_rb),
+                                       AIC(cox_new3) - AIC(cox_CF_rb),
                                        (as.numeric(primer_annot$end[primer_annot$name==amplicon])+as.numeric(primer_annot$begin[primer_annot$name==amplicon]))/2))
-  avAIC_table_ext$rbAIC[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new) - AIC(cox_CF)
-  avAIC_table_ext$rbAIC_sur[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new2) - AIC(cox_CF)
-  avAIC_table_ext$rbAIC_hybr[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new3) - AIC(cox_CF)
+  avAIC_table_ext$rbAIC[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new) - AIC(cox_CF_rb)
+  avAIC_table_ext$rbAIC_sur[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new2) - AIC(cox_CF_rb)
+  avAIC_table_ext$rbAIC_hybr[avAIC_table_ext$AmpliconID==amplicon] <- AIC(cox_new3) - AIC(cox_CF_rb)
 }
 AIC_GREM1_rb
 
 write.table(avAIC_table_ext,file="avAIC_table_ext.txt",col.names=T,row.names=F,quote=F,sep="\t")
+
+##########################################################
+# Figure 4: Delta AIC per amplicon (former Table 3; E14) #
+##########################################################
+# Per amplicon (genomic order as in Supplementary Table 6): mean and minimum CpG-based Delta AIC (grey line between them) and the
+# read-based Delta AIC (height + density, rbAIC_hybr). Star after the amplicon name as in the Figure 4 legend:
+# * smallest swap-test p < 0.05 over the target-sequence CpG pairs of the amplicon (res_swap; E18, one cut-off for all genes).
+
+## Define settings
+#####################
+outdir_table3 <- file.path(project_dir, "AIC_plots")
+dir.create(outdir_table3, showWarnings = F, recursive = T)
+outfile_table3 <- file.path(outdir_table3, "Figure4_DeltaAIC_per_amplicon.pdf")
+outfile_table3_data <- file.path(outdir_table3, "Figure4_data.txt")
+genes_table3 <- c("NDRG4", "GREM1", "LY75")
+measures_table3 <- c("CpG-based mean", "CpG-based minimum", "Read-based")
+colours_table3 <- setNames(c("#2a78d6", "#1baf7a", "#eb6834"), measures_table3)
+shapes_table3 <- setNames(c(16, 17, 18), measures_table3)
+
+## Functions
+#####################
+get_min_pval_intra <- function(amplicon){
+  # Smallest swap-test p over the target-sequence CpG pairs of the amplicon (NA if the amplicon has no pairs)
+  mask_amplicon <- res_swap$Amplicon == amplicon
+  if (sum(mask_amplicon) == 0){
+    return(NA)
+  }
+  return(min(res_swap$pval_swap[mask_amplicon]))
+}
+
+## Data for the figure
+#####################
+dat_fig_table3 <- avAIC_table_ext[,c("AmpliconID","Am_CpG","avAIC","minAIC","rbAIC_hybr")]
+dat_fig_table3$avAIC <- as.numeric(dat_fig_table3$avAIC)
+dat_fig_table3$minAIC <- as.numeric(dat_fig_table3$minAIC)
+dat_fig_table3$rbAIC_hybr <- as.numeric(dat_fig_table3$rbAIC_hybr)
+
+mask_no_data <- is.na(dat_fig_table3$avAIC)
+print(sprintf("Figure 4: removing amplicons without CpG data (%d/%d): %s", sum(mask_no_data),
+              nrow(dat_fig_table3), paste(dat_fig_table3$AmpliconID[mask_no_data], collapse = ", ")))
+# expect: 3/38 (NDRG4_92, GREM1_60, LY75_6_S)
+dat_fig_table3 <- dat_fig_table3[!mask_no_data,]
+dat_fig_table3$Gene <- factor(gsub("_.*$", "", dat_fig_table3$AmpliconID), levels = genes_table3)
+
+dat_fig_table3$min_pval_intra <- sapply(dat_fig_table3$AmpliconID, get_min_pval_intra)
+dat_fig_table3$star <- ""
+mask_star_sign <- !is.na(dat_fig_table3$min_pval_intra) & dat_fig_table3$min_pval_intra < 0.05
+dat_fig_table3$star[mask_star_sign] <- "*"
+print(sprintf("Figure 4: amplicons with * %d (of %d)", sum(dat_fig_table3$star == "*"), nrow(dat_fig_table3)))
+# expect: 18 (8 NDRG4, 5 GREM1, 5 LY75)
+
+# Amplicon label with star; first amplicon of a gene on top (genomic order of avAIC_table_ext)
+dat_fig_table3$label <- paste(dat_fig_table3$AmpliconID, dat_fig_table3$star)
+dat_fig_table3$label <- factor(dat_fig_table3$label, levels = rev(dat_fig_table3$label))
+write.table(dat_fig_table3, outfile_table3_data, col.names = T, row.names = F, quote = F, sep = "\t")
+
+# One row per amplicon and measure (points)
+dat_fig_points <- rbind(data.frame(label = dat_fig_table3$label, Gene = dat_fig_table3$Gene,
+                                   measure = measures_table3[1], delta_AIC = dat_fig_table3$avAIC),
+                        data.frame(label = dat_fig_table3$label, Gene = dat_fig_table3$Gene,
+                                   measure = measures_table3[2], delta_AIC = dat_fig_table3$minAIC),
+                        data.frame(label = dat_fig_table3$label, Gene = dat_fig_table3$Gene,
+                                   measure = measures_table3[3], delta_AIC = dat_fig_table3$rbAIC_hybr))
+dat_fig_points$measure <- factor(dat_fig_points$measure, levels = measures_table3)
+mask_points_ok <- !is.na(dat_fig_points$delta_AIC)
+print(sprintf("Figure 4: points without a value removed (%d/%d)", sum(!mask_points_ok), length(mask_points_ok)))
+dat_fig_points <- dat_fig_points[mask_points_ok,]
+
+## Plot
+#####################
+g <- ggplot(dat_fig_table3, aes(y = label)) +
+  geom_vline(xintercept = 0, colour = "grey50", linewidth = 0.4) +
+  geom_segment(aes(x = minAIC, xend = avAIC, yend = label), colour = "grey75", linewidth = 1) +
+  geom_point(data = dat_fig_points, aes(x = delta_AIC, colour = measure, shape = measure), size = 2.5) +
+  scale_colour_manual(values = colours_table3) +
+  scale_shape_manual(values = shapes_table3) +
+  facet_grid(Gene ~ ., scales = "free_y", space = "free_y") +
+  labs(x = expression(Delta*"AIC compared with the baseline model"), y = NULL, colour = NULL, shape = NULL) +
+  theme_bw() +
+  theme(legend.position = "top", panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
+        strip.text.y = element_text(angle = 0, face = "italic"))
+cairo_pdf(outfile_table3, width = 7, height = 9) # cairo: Delta glyph (ToDo E20)
+print(g)
+dev.off()
 
 
 #######################
@@ -2023,7 +2492,8 @@ for (amplicon in amplicons_s3){
 
   files_j <- files_s3[(grepl("run_231_30",files_s3) | grepl("run_231_45",files_s3)) &  grepl(paste0(amplicon,"_"),files_s3)]
 
-  jpeg(paste0("suppl_fig_3/",amplicon,"_S3.jpg"),width=256*3,height=256*1.5)
+  # Vector image (R1, ToDo E15): pdf of the same size in inches as the former 72-dpi jpeg
+  pdf(paste0("suppl_fig_3/",amplicon,"_S3.pdf"),width=256*3/72,height=256*1.5/72)
   par(mfrow=c(1,2))
   par(mar=c(2,3,3,2))
 
@@ -2181,548 +2651,18 @@ for (amplicon in amplicons_s3){
 
 
 
-#################
-#################
-#################
-###           ###
-###           ###   
-###   Stale   ###
-###           ###
-###           ###
-#################
-#################
-#################
+############################################
+# Save workspace for the sensitivity script #
+############################################
+# TargetedBisulphite_sensitivity.R loads this workspace, so the sensitivity analyses run without the main analysis
+save.image(file = paste(project_dir,"TargetedBisulphite_analysis.RData",sep=""))
 
+#############
+# Close log #
+#############
 
-
-    # peak_height_i <- NULL
-    # for (t in 1:ncol(dat_plot_rb_i)){
-    #   if(sum(dat_plot_rb_i[,t]==0)==0){
-    #     peak_height_i <- c(peak_height_i,rownames(dat_plot_rb_i)[nrow(dat_plot_rb_i)])
-    #   } else if (which(dat_plot_rb_i[,t]==0)[1]==1){
-    #     peak_height_i <- c(peak_height_i,0)
-    #   } else {      
-    #     peak_height_i <- c(peak_height_i,rownames(dat_plot_rb_i)[which(dat_plot_rb_i[,t]==0)[1]-1])
-    #   }
-    # }
-
-    # area_i <- NULL
-    # for (t in 1:ncol(dat_plot_rb_i)){
-    #   if(sum(dat_plot_rb_i[,t]==0)==0){
-    #     area_i <- c(area_i,rownames(dat_plot_rb_i)[nrow(dat_plot_rb_i)])
-    #   } else if (which(dat_plot_rb_i[,t]==0)[1]==1){
-    #     area_i <- c(area_i,0)
-    #   } else {      
-    #     area_i <- c(area_i,rownames(dat_plot_rb_i)[which(dat_plot_rb_i[,t]==0)[1]-1])
-    #   }
-    # }
-
-    #print(peak_height_i)
-
-    # # Normalize peak height vs max peak height (primer CpG incl)
-    # meth_state[sample_j_ori,amplicon] <- max(as.numeric(peak_height_i))/sum(db_rb_anal[[amplicon]][[sample_j_ori]]$count)
-    # Normalize peak height vs max peak height (primer CpG non incl)
-    # meth_state[sample_j_ori,amplicon] <- max(as.numeric(peak_height_i))/as.numeric(rownames(dat_plot_rb_i)[rowSums(dat_plot_rb_i)!=0][sum(rowSums(dat_plot_rb_i)!=0)])
-    
-    # Normalize area vs max area
-    # zone_oi <- dat_plot_rb_i[1:which(rownames(dat_plot_rb_i)==max(as.numeric(area_i))),]
-    # zone_oi_incr <- as.numeric(c(rownames(zone_oi)[1],as.numeric(rownames(zone_oi)[2:nrow(zone_oi)])-as.numeric(rownames(zone_oi)[1:(nrow(zone_oi)-1)])))
-    # meth_state2[sample_j_ori,amplicon] <- sum(rowSums(zone_oi)*zone_oi_incr)/sum(ncol(zone_oi)*zone_oi_incr)
-
-    # new measures Tim
-    # meth_state[sample_j_ori,amplicon] <- as.numeric(tail(rownames(dat_plot_rb_i[rowSums(dat_plot_rb_i)!=0,]),1))/as.numeric(tail(rownames(dat_plot_rb_i),1))
- 
-    # zone_oi <- dat_plot_rb_i[rowSums(dat_plot_rb_i)!=0,]
-    # zone_oi_incr <- as.numeric(c(rownames(zone_oi)[1],as.numeric(rownames(zone_oi)[2:nrow(zone_oi)])-as.numeric(rownames(zone_oi)[1:(nrow(zone_oi)-1)])))
-    # meth_state2[sample_j_ori,amplicon] <- sum(rowSums(zone_oi)*zone_oi_incr)/sum(ncol(zone_oi)*zone_oi_incr)
-
-
-# ## Methrate plots
-# for (amplicon in amplicons){
-#   methrate <- NULL
-#   print(sprintf("Plotting for %s",amplicon))
-#   for (sample_j_ori in names(db_rb_anal[[amplicon]])){
-#     dat_sample_j <- db_rb_anal[[amplicon]][[sample_j_ori]]
-    
-#     if(grepl("LY75",amplicon)){
-#       betas_ampl <- betas_LY75[grepl(amplicon,rownames(betas_LY75)),]
-#     } else if (grepl("GREM1",amplicon)){
-#       betas_ampl <- betas_GREM1[grepl(amplicon,rownames(betas_GREM1)),]
-#     } else if (grepl("NDRG4",amplicon)){
-#       betas_ampl <- betas_NDRG4[grepl(amplicon,rownames(betas_NDRG4)),]
-#     }
-#     CpG_in_primer_ampl <- which(rownames(betas_ampl)%in%CpG_in_primer)
-
-#     # Check rb dna meth counts vs biseq
-#     #sample_annot[sample_annot$Sample_ID==sample_j_ori,]
-#     #betas_ampl[,"P12"]
-#     #sum(dat_sample_j$count[grepl("^C.*$",dat_sample_j$allele)])/sum(dat_sample_j$count)
-
-#     for (i in 1:nrow(dat_sample_j)){
-#       if (length(CpG_in_primer_ampl)>0){
-#         methrate <-  c(methrate,rep(sum(grepl("C",unlist(strsplit(dat_sample_j$allele[i],""))[-CpG_in_primer_ampl]))/(nchar(dat_sample_j$allele[i])-length(CpG_in_primer_ampl)),dat_sample_j$count[i]))
-#       } else {
-#         methrate <-  c(methrate,rep(sum(grepl("C",unlist(strsplit(dat_sample_j$allele[i],""))))/nchar(dat_sample_j$allele[i]),dat_sample_j$count[i]))
-#       }
-#     }
-#   }
-#   if (!is.null(methrate)){
-#     jpeg(paste0("waterfall_plots/methrate_",amplicon,".jpg"),width=512,height=512)
-#     hist(methrate)
-#     dev.off()
-#   }
-# }
-
-# ## Meth_perc plots
-# meth_state <- data.frame(matrix(rep(NA,length(amplicons)*nrow(sample_annot)),nrow=nrow(sample_annot)))
-# colnames(meth_state) <- amplicons
-# rownames(meth_state) <- sample_annot$Sample_ID
-# meth_state2 <- meth_state
-# cutoff_mono <- 0.5
-# for (amplicon in amplicons){
-#   print(sprintf("Plotting for %s",amplicon))
-#   dat_methrate_ps <- NULL
-#   for (sample_j_ori in names(db_rb_anal[[amplicon]])){
-#     methrate <- NULL
-#     dat_sample_j <- db_rb_anal[[amplicon]][[sample_j_ori]]
-#     for (i in 1:nrow(dat_sample_j)){
-#         methrate <-  c(methrate,rep(sum(grepl("C",unlist(strsplit(dat_sample_j$allele[i],""))))/nchar(dat_sample_j$allele[i]),dat_sample_j$count[i]))
-#     }
-#     # if (grepl("GREM1",amplicon)){
-#     #       dat_methrate_ps <- rbind(dat_methrate_ps,c(sample_j_ori,
-#     #                                            sum(methrate > cutoff_mono)/length(methrate),
-#     #                                            sum(methrate < 0.25)/sum(methrate > 0.25 & methrate < 0.75)))
-#     # } else {
-#       dat_methrate_ps <- rbind(dat_methrate_ps,c(sample_j_ori,
-#                                                 sum(methrate > cutoff_mono)/length(methrate),
-#                                                 (sum(methrate > 0.75)+1)/(sum(methrate > 0.25 & methrate < 0.75)+1)))
-#     # }
-#   }
-#   if (!is.null(dat_methrate_ps)){
-#     jpeg(paste0("waterfall_plots/perc_meth_",amplicon,".jpg"),width=512,height=512)
-#     hist(as.numeric(dat_methrate_ps[,2]),breaks=20)
-#     dev.off()
-#   }
-#   meth_state[rownames(meth_state)%in%dat_methrate_ps[,1],amplicon] <- as.numeric(dat_methrate_ps[,2])
-#   meth_state2[rownames(meth_state2)%in%dat_methrate_ps[,1],amplicon] <- as.numeric(dat_methrate_ps[,3])
-#   #meth_state[rownames(meth_state)%in%dat_methrate_ps[,1],amplicon] <- c("non","mono","bi")[c(as.numeric(dat_methrate_ps[,2])>=0.1) + c(as.numeric(dat_methrate_ps[,2])>=0.6)+1]
-# }
-
-# amplicons_NDRG4 <- AIC_new[AIC_new[,2]>0,1]
-# amplicons_NDRG4 <- amplicons[grepl("NDRG4",amplicons)]
-# for (amplicon in amplicons_NDRG4){
-#   CRC_annot_sort$meth_state <- NA
-#   for (i in 1:nrow(CRC_annot_sort)){
-#     CRC_annot_sort$meth_state[i] <- meth_state[sample_annot$Sample_ID[sample_annot$CRC==CRC_annot_sort$Sample_ID[i]],amplicon]
-#   }
-#   #CRC_annot_sort$meth_state <- c("yes","no")[c(CRC_annot_sort$meth_state>0.05) + 1]
-#   formula_new <- formula(paste("Tissue ~ meth_state+Gender+Age+Patient_ID",sep=""))
-#   cn_formula_new <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_new))),"+",fixed=TRUE)))
-#   model_new <- glm(formula_new, 
-#                   data = CRC_annot_sort, 
-#                   family = binomial(link="logit"))
-#   #print(summary(model_new))
-#   AIC_new[AIC_new[,1]==amplicon,2] <- amplicon,AIC(model_new) - AIC(model_CF)
-# }
-# AIC_new
-
-# AIC_new <- NULL
-# amplicons_NDRG4 <- amplicons[grepl("NDRG4",amplicons)]
-# for (amplicon in amplicons_NDRG4){
-#   CRC_annot_sort$meth_state <- NA
-#   for (i in 1:nrow(CRC_annot_sort)){
-#     CRC_annot_sort$meth_state[i] <- meth_state[sample_annot$Sample_ID[sample_annot$CRC==CRC_annot_sort$Sample_ID[i]],amplicon]
-#   }
-#   #CRC_annot_sort$meth_state <- c("yes","no")[c(CRC_annot_sort$meth_state>0.05) + 1]
-#   formula_new <- formula(paste("Tissue ~ meth_state+Gender+Age+Patient_ID",sep=""))
-#   cn_formula_new <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_new))),"+",fixed=TRUE)))
-#   model_new <- glm(formula_new, 
-#                   data = CRC_annot_sort, 
-#                   family = binomial(link="logit"))
-#   #print(summary(model_new))
-#   if (AIC(model_new) - AIC(model_CF)<0){
-#     AIC_new <- rbind(AIC_new,c(amplicon,AIC(model_new) - AIC(model_CF)))
-#   } else {
-#     CRC_annot_sort$meth_state <- c("yes","no")[c(CRC_annot_sort$meth_state>0.05) + 1]
-#     formula_new <- formula(paste("Tissue ~ meth_state+Gender+Age+Patient_ID",sep=""))
-#     cn_formula_new <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_new))),"+",fixed=TRUE)))
-#     model_new <- glm(formula_new, 
-#                     data = CRC_annot_sort, 
-#                     family = binomial(link="logit"))
-#     AIC_new <- rbind(AIC_new,c(amplicon,AIC(model_new) - AIC(model_CF)))
-#   }
-# }
-# amplicons_not_NDRG4 <- amplicons[!grepl("NDRG4",amplicons)]
-# for (amplicon in amplicons_not_NDRG4){
-#   CRC_annot_sort$meth_state <- NA
-#   for (i in 1:nrow(CRC_annot_sort)){
-#     CRC_annot_sort$meth_state[i] <- meth_state[sample_annot$Sample_ID[sample_annot$CRC==CRC_annot_sort$Sample_ID[i]],amplicon]
-#   }
-#   CRC_annot_sort$meth_state <- c("yes","no")[c(CRC_annot_sort$meth_state>0.05) + 1]
-#   formula_new <- formula(paste("Tissue ~ meth_state+Gender+Age+Patient_ID",sep=""))
-#   cn_formula_new <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_new))),"+",fixed=TRUE)))
-#   model_new <- glm(formula_new, 
-#                   data = CRC_annot_sort, 
-#                   family = binomial(link="logit"))
-#   #print(summary(model_new))
-#   AIC_new <- rbind(AIC_new,c(amplicon,AIC(model_new) - AIC(model_CF)))
-# }
-
-#####################################################
-# AIC analyses before implementing it as a function #
-#####################################################
-
-# #NDRG4
-# set.seed(seed_perm)
-# pval_list_NDRG4 <- list()
-# for (k in 1:nrow(primer_annot_NDRG4)){
-#   print(paste0("Primer: ",primer_annot_NDRG4$name[k]))
-#   print(paste0("Location: chr ",primer_annot_NDRG4$chromosome[k]," from ",primer_annot_NDRG4$begin[k]," to ",primer_annot_NDRG4$end[k]))
-#   mask_amplicon <- grepl(paste0(primer_annot_NDRG4$name[k],"$"),rownames(Mval_NDRG4_sort))
-#   dat_amplicon <- t(Mval_NDRG4_sort[mask_amplicon,])
-  
-#   dim(dat_amplicon)
-#   sum(CRC_annot_sort$Sample_ID==rownames(dat_amplicon))
-  
-#   dat_amplicon <- cbind(CRC_annot_sort[,colnames(CRC_annot_sort)%in%c("Tissue")],dat_amplicon)
-#   colnames(dat_amplicon) <- c("Tissue", paste0(rep("CpG_",sum(mask_amplicon)),rownames(Mval_NDRG4_sort[mask_amplicon,])))
-  
-#   cn_names <- colnames(dat_amplicon)[grepl("CpG",colnames(dat_amplicon))]
-#   cn_names <- gsub("CpG_","",cn_names)
-  
-#   print(paste0(length(cn_names)," CpGs"))
-  
-#   if (length(cn_names)==0){
-#     pval_list_NDRG4[[k]] <- NULL
-#     next()
-#   }
-  
-#   dat_amplicon <- data.frame(dat_amplicon,stringsAsFactors = F)
-#   dat_amplicon$Tissue <- as.factor(dat_amplicon$Tissue)
-  
-#   head(dat_amplicon)
-  
-#   AIC_amplicon <- NULL
-#   for (i in 1:length(cn_names)){
-#     dat_test_i <- dat_amplicon[,c("Tissue",paste0("CpG_",cn_names[i]))]
-    
-#     CpG_name_i <- colnames(dat_test_i)[grepl("CpG",colnames(dat_test_i))]
-#     CpG_name_i <- gsub("^CpG_","",CpG_name_i)
-    
-#     formula_i <- formula(paste("Tissue ~ CpG_",CpG_name_i,sep=""))
-#     cn_formula_i <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_i))),"+",fixed=TRUE)))
-#     logreg_BS_i <- glm(formula_i, data = dat_test_i, family = binomial(link="logit"))
-    
-#     AIC_i <- AIC(logreg_BS_i)
-#     AIC_amplicon <- rbind(AIC_amplicon,c(CpG_name_i,AIC_i))
-#   }
-#   AIC_amplicon <- data.frame(AIC_amplicon, stringsAsFactors = F)
-#   colnames(AIC_amplicon) <- c("CpG","AIC")
-#   AIC_amplicon$AIC <- as.numeric(AIC_amplicon$AIC)
-    
-#   combos <- ncol(combn(1:length(cn_names),2))
-#   pval <- data.frame(CpG_1=rep("",combos),
-#                      CpG_2=rep("",combos),
-#                      AIC_1=rep("",combos),
-#                      AIC_2=rep("",combos),
-#                      delta_AIC=rep("",combos),
-#                      pval=rep(1,combos),
-#                      stringsAsFactors = F)
-#   counter <- 1
-#   for (i in 1:(length(cn_names)-1)){
-#     for (j in (i+1):length(cn_names)){
-#       print(paste0("CpG comparison: ",paste(cn_names[c(i,j)],collapse=" vs ")))
-      
-#       pval[counter,1:2] <- cn_names[c(i,j)]
-      
-#       dat_test_i <- dat_amplicon[,c("Tissue",paste0(rep("CpG_",2),cn_names[c(i,j)]))]
-#       pval[counter,3:5] <- calculate_delta_AIC_diagnostic(dat_test_i)
-
-#       distr_AIC <- mclapply(1:10000,bootstrap_AIC_diagnostic,mc.cores=40)
-#       distr_AIC <- unlist(distr_AIC)
-
-#       jpeg(paste0("AIC_plots/CpG_plots/CRC_CpG_",cn_names[i],"vs",cn_names[j],".jpg"))
-#       hist(distr_AIC,breaks=50)
-#       abline(v=pval[counter,5],col="red")
-#       dev.off()
-      
-#       pval[counter,6] <- 2*min(sum(as.numeric(pval[counter,5])>distr_AIC)/length(distr_AIC),sum(as.numeric(pval[counter,5])<distr_AIC)/length(distr_AIC))
-#       counter <- counter + 1
-#     }
-#   } 
-#   pval$fdr <- p.adjust(pval$pval)
-#   pval_list_NDRG4[[k]] <- pval 
-  
-#   if (sum(pval$fdr<fdr_treshold_toplot)>0){
-#     pval_sign <- pval[pval$fdr<fdr_treshold_toplot,]
-#     print(pval_sign)
-#     if (fdr_treshold_toplot%%100/10==5){
-#       sign_level <- (pval_sign$fdr < 0.05) + (pval_sign$fdr < 0.005) + (pval_sign$fdr < 0.0005) + (pval_sign$fdr < 0.0005)
-#     } else {
-#       sign_level <- (pval_sign$fdr < 0.1) + (pval_sign$fdr < 0.01) + (pval_sign$fdr < 0.001) + (pval_sign$fdr < 0.001)
-#     }
-    
-#     pos_x <-as.numeric(gsub("^.+_","",gsub("_[NDRG|LY|GREM].+$","",AIC_amplicon$CpG)))
-    
-#     jpeg(paste0("AIC_plots/",primer_annot_NDRG4$name[k],".jpg"))
-#     plot(pos_x,AIC_amplicon$AIC,type="l") # this line is just to get limits for plots in next command
-#     add_space <- (par("usr")[4]-par("usr")[3])*0.05*(nrow(pval_sign)+1)
-#     # print(add_space)
-#     plot(pos_x,AIC_amplicon$AIC,type="l",main=primer_annot_NDRG4$name[k],
-#          ylim=c((par("usr")[3]-add_space),par("usr")[4]),xlab="Pos",ylab="AIC",cex.lab=cex_AIC_plots, cex.axis=cex_AIC_plots)
-#     increment_space <- add_space/(nrow(pval_sign)+1)
-#     for (t in 1:nrow(pval_sign)){
-#       segments(pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_1[t])],par("usr")[3]+increment_space*t,
-#                pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_2[t])],par("usr")[3]+increment_space*t)
-#       mid <- (pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_1[t])] +
-#                 pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_2[t])])/2
-#       text(mid,par("usr")[3]+increment_space*t-(0.33*increment_space),paste(rep("*",sign_level[t]),collapse=""))
-#     }
-#     points(pos_x,AIC_amplicon$AIC,pch=16)
-#     n_bp_add <- 2
-#     rect(primer_annot_list[["NDRG4"]]$begin[k]-n_bp_add,(par("usr")[3]-add_space),
-#          primer_annot_list[["NDRG4"]]$begin[k]+primer_annot_list[["NDRG4"]]$len_fwd[k]+n_bp_add,par("usr")[4],
-#          col=alpha("cadetblue",alpha=0.20))
-#     rect(primer_annot_list[["NDRG4"]]$end[k]-primer_annot_list[["NDRG4"]]$len_rev[k]-n_bp_add,(par("usr")[3]-add_space),
-#          primer_annot_list[["NDRG4"]]$end[k]+n_bp_add,par("usr")[4],
-#          col=alpha("cadetblue",alpha=0.20))
-#     dev.off()
-#   } else {
-#     print("No significant differences!")
-#   }
-# }
-# names(pval_list_NDRG4) <- primer_annot_NDRG4$name
-# saveRDS(pval_list_NDRG4,paste0("pval_list_NDRG4_seed",seed_perm,".rds"))
-
-# #GREM1
-# set.seed(seed_perm)
-# pval_list_GREM1 <- list()
-# for (k in 1:nrow(primer_annot_GREM1)){
-#   print(paste0("Primer: ",primer_annot_GREM1$name[k]))
-#   print(paste0("Location: chr ",primer_annot_GREM1$chromosome[k]," from ",primer_annot_GREM1$begin[k]," to ",primer_annot_GREM1$end[k]))
-#   mask_amplicon <- grepl(paste0(primer_annot_GREM1$name[k],"$"),rownames(Mval_GREM1_sort))
-#   dat_amplicon <- t(Mval_GREM1_sort[mask_amplicon,])
-  
-#   dim(dat_amplicon)
-#   sum(ccRCC_annot_sort$Sample_ID==rownames(dat_amplicon))
-  
-#   dat_amplicon <- cbind(ccRCC_annot_sort[,colnames(ccRCC_annot_sort)%in%c("Followup_time","NK_death")],dat_amplicon)
-#   colnames(dat_amplicon) <- c(colnames(ccRCC_annot_sort)[colnames(ccRCC_annot_sort)%in%c("Followup_time","NK_death")],
-#                               paste0(rep("CpG_",sum(mask_amplicon)),rownames(Mval_GREM1_sort[mask_amplicon,])))
-  
-#   cn_names <- colnames(dat_amplicon)[grepl("CpG",colnames(dat_amplicon))]
-#   cn_names <- gsub("CpG_","",cn_names)
-  
-#   print(paste0(length(cn_names)," CpGs"))
-  
-#   if (length(cn_names)==0){
-#     pval_list_GREM1[[k]] <- "No CpGs"
-#     next()
-#   }
-  
-#   dat_amplicon <- data.frame(dat_amplicon,stringsAsFactors = F)
-  
-#   head(dat_amplicon)
-  
-#   AIC_amplicon <- NULL
-#   for (i in 1:length(cn_names)){
-#     dat_test_i <- dat_amplicon[,c("Followup_time","NK_death",paste0("CpG_",cn_names[i]))]
-    
-#     CpG_name_i <- colnames(dat_test_i)[grepl("CpG",colnames(dat_test_i))]
-#     CpG_name_i <- gsub("^CpG_","",CpG_name_i)
-    
-#     formula_i <- formula(paste("Surv(Followup_time, NK_death) ~ CpG_",CpG_name_i,sep=""))
-#     cn_formula_i <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_i))),"+",fixed=TRUE)))
-#     cox_BS_i <- coxph(formula_i, data = dat_test_i)
-
-#     AIC_i <- AIC(cox_BS_i)
-#     AIC_amplicon <- rbind(AIC_amplicon,c(CpG_name_i,AIC_i))
-#   }
-#   AIC_amplicon <- data.frame(AIC_amplicon, stringsAsFactors = F)
-#   colnames(AIC_amplicon) <- c("CpG","AIC")
-#   AIC_amplicon$AIC <- as.numeric(AIC_amplicon$AIC)
-  
-  
-#   combos <- ncol(combn(1:length(cn_names),2))
-#   pval <- data.frame(CpG_1=rep("",combos),
-#                      CpG_2=rep("",combos),
-#                      AIC_1=rep("",combos),
-#                      AIC_2=rep("",combos),
-#                      delta_AIC=rep("",combos),
-#                      pval=rep(1,combos),
-#                      stringsAsFactors = F)
-#   counter <- 1
-#   for (i in 1:(length(cn_names)-1)){
-#     print(sprintf("Comparing %s with %s CpGs",cn_names[i],length((i+1):length(cn_names))))
-#     for (j in (i+1):length(cn_names)){
-#       #print(paste0("CpG comparison: ",paste(cn_names[c(i,j)],collapse=" vs ")))
-      
-#       pval[counter,1:2] <- cn_names[c(i,j)]
-      
-#       dat_test_i <- dat_amplicon[,c("Followup_time","NK_death",paste0(rep("CpG_",2),cn_names[c(i,j)]))]
-#       pval[counter,3:5] <- calculate_delta_AIC_prognostic(dat_test_i)
-      
-#       distr_AIC <- mclapply(1:10000,bootstrap_AIC_prognostic,mc.cores=40)
-#       distr_AIC <- unlist(distr_AIC)
-
-#       jpeg(paste0("AIC_plots/CpG_plots/ccRCC_CpG_",cn_names[i],"vs",cn_names[j],".jpg"))
-#       hist(distr_AIC,breaks=50)
-#       abline(v=pval[counter,5],col="red")
-#       dev.off()
-#       pval[counter,6] <- 2*min(sum(as.numeric(pval[counter,5])>distr_AIC)/length(distr_AIC),sum(as.numeric(pval[counter,5])<distr_AIC)/length(distr_AIC))
-#       counter <- counter + 1
-#     }
-#   }
-#   pval$fdr <- p.adjust(pval$pval)
-#   pval_list_GREM1[[k]] <- pval 
-  
-#   if (sum(pval$fdr<fdr_treshold_toplot)>0){
-#     pval_sign <- pval[pval$fdr<fdr_treshold_toplot,]
-#     print(pval_sign)
-#     if (fdr_treshold_toplot%%100/10==5){
-#       sign_level <- (pval_sign$fdr < 0.05) + (pval_sign$fdr < 0.005) + (pval_sign$fdr < 0.0005) + (pval_sign$fdr < 0.0005)
-#     } else {
-#       sign_level <- (pval_sign$fdr < 0.1) + (pval_sign$fdr < 0.01) + (pval_sign$fdr < 0.001) + (pval_sign$fdr < 0.001)
-#     }
-    
-#     pos_x <-as.numeric(gsub("^.+_","",gsub("_[NDRG|LY|GREM].+$","",AIC_amplicon$CpG)))
-    
-#     jpeg(paste0("AIC_plots/",primer_annot_GREM1$name[k],".jpg"))
-#     plot(pos_x,AIC_amplicon$AIC,type="l") # this line is just to get limits for plots in next command
-#     add_space <- (par("usr")[4]-par("usr")[3])*0.05*(nrow(pval_sign)+1)
-#     # print(add_space)
-#     plot(pos_x,AIC_amplicon$AIC,type="l",main=primer_annot_GREM1$name[k],
-#          ylim=c((par("usr")[3]-add_space),par("usr")[4]),xlab="Pos",ylab="AIC",cex.lab=cex_AIC_plots,cex.axis=cex_AIC_plots)
-#     increment_space <- add_space/(nrow(pval_sign)+1)
-#     for (t in 1:nrow(pval_sign)){
-#       segments(pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_1[t])],par("usr")[3]+increment_space*t,
-#                pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_2[t])],par("usr")[3]+increment_space*t)
-#       mid <- (pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_1[t])] +
-#                 pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_2[t])])/2
-#       text(mid,par("usr")[3]+increment_space*t-(0.33*increment_space),paste(rep("*",sign_level[t]),collapse=""))
-#     }
-#     points(pos_x,AIC_amplicon$AIC,pch=16)
-#     dev.off()
-#   } else {
-#     print("No significant differences!")
-#   }
-# }
-# names(pval_list_GREM1) <- primer_annot_GREM1$name
-# saveRDS(pval_list_GREM1,paste0("pval_list_GREM1_seed",seed_perm,".rds"))
-
-# #LY75
-# colnames(melanoma_annot_sort)[colnames(melanoma_annot_sort)=="MK_death"] <- "NK_death"
-# set.seed(seed_perm)
-# pval_list_LY75 <- list()
-# for (k in 1:nrow(primer_annot_LY75)){
-#   print(paste0("Primer: ",primer_annot_LY75$name[k]))
-#   print(paste0("Location: chr ",primer_annot_LY75$chromosome[k]," from ",primer_annot_LY75$begin[k]," to ",primer_annot_LY75$end[k]))
-#   mask_amplicon <- grepl(paste0(primer_annot_LY75$name[k],"$"),rownames(Mval_LY75_sort))
-#   dat_amplicon <- t(Mval_LY75_sort[mask_amplicon,])
-  
-#   dim(dat_amplicon)
-#   sum(melanoma_annot_sort$Sample_ID==rownames(dat_amplicon))
-  
-#   dat_amplicon <- cbind(melanoma_annot_sort[,colnames(melanoma_annot_sort)%in%c("Followup_time","NK_death")],dat_amplicon)
-#   colnames(dat_amplicon) <- c(colnames(melanoma_annot_sort)[colnames(melanoma_annot_sort)%in%c("Followup_time","NK_death")],
-#                               paste0(rep("CpG_",sum(mask_amplicon)),rownames(Mval_LY75_sort[mask_amplicon,])))
-  
-#   cn_names <- colnames(dat_amplicon)[grepl("CpG",colnames(dat_amplicon))]
-#   cn_names <- gsub("CpG_","",cn_names)
-  
-#   print(paste0(length(cn_names)," CpGs"))
-  
-#   if (length(cn_names)==0){
-#     pval_list_LY75[[k]] <- "No CpGs"
-#     next()
-#   }
-  
-#   dat_amplicon <- data.frame(dat_amplicon,stringsAsFactors = F)
-
-#   head(dat_amplicon)
-  
-#   AIC_amplicon <- NULL
-#   for (i in 1:length(cn_names)){
-#     dat_test_i <- dat_amplicon[,c("Followup_time","NK_death",paste0("CpG_",cn_names[i]))]
-    
-#     CpG_name_i <- colnames(dat_test_i)[grepl("CpG",colnames(dat_test_i))]
-#     CpG_name_i <- gsub("^CpG_","",CpG_name_i)
-    
-#     formula_i <- formula(paste("Surv(Followup_time, NK_death) ~ CpG_",CpG_name_i,sep=""))
-#     cn_formula_i <-  gsub(" ","",unlist(strsplit(gsub(".*~","",Reduce(paste, deparse(formula_i))),"+",fixed=TRUE)))
-#     cox_BS_i <- coxph(formula_i, data = dat_test_i)
-    
-#     AIC_i <- AIC(cox_BS_i)
-#     AIC_amplicon <- rbind(AIC_amplicon,c(CpG_name_i,AIC_i))
-#   }
-#   AIC_amplicon <- data.frame(AIC_amplicon, stringsAsFactors = F)
-#   colnames(AIC_amplicon) <- c("CpG","AIC")
-#   AIC_amplicon$AIC <- as.numeric(AIC_amplicon$AIC)
-  
-  
-#   combos <- ncol(combn(1:length(cn_names),2))
-#   pval <- data.frame(CpG_1=rep("",combos),
-#                      CpG_2=rep("",combos),
-#                      AIC_1=rep("",combos),
-#                      AIC_2=rep("",combos),
-#                      delta_AIC=rep("",combos),
-#                      pval=rep(1,combos),
-#                      stringsAsFactors = F)
-#   counter <- 1
-#   for (i in 1:(length(cn_names)-1)){
-#     for (j in (i+1):length(cn_names)){
-#       print(paste0("CpG comparison: ",paste(cn_names[c(i,j)],collapse=" vs ")))
-
-#       pval[counter,1:2] <- cn_names[c(i,j)]
-      
-#       dat_test_i <- dat_amplicon[,c("Followup_time","NK_death",paste0(rep("CpG_",2),cn_names[c(i,j)]))]
-#       pval[counter,3:5] <- calculate_delta_AIC_prognostic(dat_test_i)
-#       distr_AIC <- rep(0,1000)
-      
-#       distr_AIC <- mclapply(1:10000,bootstrap_AIC_prognostic,mc.cores=40)
-#       distr_AIC <- unlist(distr_AIC)
-
-#       jpeg(paste0("AIC_plots/CpG_plots/melanoma_CpG_",cn_names[i],"vs",cn_names[j],".jpg"))
-#       hist(distr_AIC,breaks=50)
-#       abline(v=pval[counter,5],col="red")
-#       dev.off()
-#       pval[counter,6] <- 2*min(sum(as.numeric(pval[counter,5])>distr_AIC)/length(distr_AIC),sum(as.numeric(pval[counter,5])<distr_AIC)/length(distr_AIC))
-#       counter <- counter + 1
-#     }
-#   }
-#   pval$fdr <- p.adjust(pval$pval)
-#   pval_list_LY75[[k]] <- pval 
-  
-#   if (sum(pval$fdr<fdr_treshold_toplot)>0){
-#     pval_sign <- pval[pval$fdr<fdr_treshold_toplot,]
-#     print(pval_sign)
-#     if (fdr_treshold_toplot%%100/10==5){
-#       sign_level <- (pval_sign$fdr < 0.05) + (pval_sign$fdr < 0.005) + (pval_sign$fdr < 0.0005) + (pval_sign$fdr < 0.0005)
-#     } else {
-#       sign_level <- (pval_sign$fdr < 0.1) + (pval_sign$fdr < 0.01) + (pval_sign$fdr < 0.001) + (pval_sign$fdr < 0.001)
-#     }
-    
-#     pos_x <-as.numeric(gsub("^.+_","",gsub("_[NDRG|LY|GREM].+$","",AIC_amplicon$CpG)))
-    
-#     jpeg(paste0("AIC_plots/",primer_annot_LY75$name[k],".jpg"))
-#     plot(pos_x,AIC_amplicon$AIC,type="l") # this line is just to get limits for plots in next command
-#     add_space <- (par("usr")[4]-par("usr")[3])*0.05*(nrow(pval_sign)+1)
-#     # print(add_space)
-#     plot(pos_x,AIC_amplicon$AIC,type="l",main=primer_annot_LY75$name[k],
-#          ylim=c((par("usr")[3]-add_space),par("usr")[4]),xlab="Pos",ylab="AIC",cex.lab=cex_AIC_plots,cex.axis=cex_AIC_plots)
-#     increment_space <- add_space/(nrow(pval_sign)+1)
-#     for (t in 1:nrow(pval_sign)){
-#       segments(pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_1[t])],par("usr")[3]+increment_space*t,
-#                pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_2[t])],par("usr")[3]+increment_space*t)
-#       mid <- (pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_1[t])] +
-#                 pos_x[which(AIC_amplicon$CpG==pval_sign$CpG_2[t])])/2
-#       text(mid,par("usr")[3]+increment_space*t-(0.33*increment_space),paste(rep("*",sign_level[t]),collapse=""))
-#     }
-#     points(pos_x,AIC_amplicon$AIC,pch=16)
-#     dev.off()
-#   } else {
-#     print("No significant differences!")
-#   }
-# }
-# names(pval_list_LY75) <- primer_annot_LY75$name
-# saveRDS(pval_list_LY75,paste0("pval_list_LY75_seed",seed_perm,".rds"))
+print(sprintf("End: %s", format(Sys.time())))
+print(sessionInfo())
+sink(type = "message")
+sink()
+close(log_con)

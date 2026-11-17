@@ -142,6 +142,13 @@ plotPlots_AIC <- function(dat_gene,locs_gene,gene,MSP_amplicon,primer_annot_gene
   for (i in 1:n_transcript_ids){
     dat_transcript <- gene_obj[gene_obj$ensembl_transcript_id==transcript_ids[i],]
     dat_transcript <- dat_transcript[sort(as.numeric(dat_transcript$exon_chrom_start),index.return=T)$ix,]
+    # Transcript name as label (R1), transcript ID if no name is available
+    label_transcript <- dat_transcript$ensembl_transcript_id[1]
+    if ("external_transcript_name" %in% colnames(dat_transcript)){
+      if (!is.na(dat_transcript$external_transcript_name[1]) & dat_transcript$external_transcript_name[1] != ""){
+        label_transcript <- dat_transcript$external_transcript_name[1]
+      }
+    }
     # print(dat_transcript)
     for (j in 1:nrow(dat_transcript)){
       rect(dat_transcript$exon_chrom_start[j],i+0.35,dat_transcript$exon_chrom_end[j],i-0.35,col="red")
@@ -159,10 +166,10 @@ plotPlots_AIC <- function(dat_gene,locs_gene,gene,MSP_amplicon,primer_annot_gene
       polygon(x_poly,y_poly,col="green")
       if(n_transcript_ids>10){
         text(dat_transcript$transcription_start_site[1]-((par("usr")[2]-par("usr")[1])/100*diff_units_transcript_id),i,
-            labels=dat_transcript$ensembl_transcript_id[1],cex=cex_labels*0.6)
+            labels=label_transcript,cex=cex_labels*0.6)
       } else {
         text(dat_transcript$transcription_start_site[1]-((par("usr")[2]-par("usr")[1])/100*diff_units_transcript_id),i,
-            labels=dat_transcript$ensembl_transcript_id[1],cex=cex_labels)
+            labels=label_transcript,cex=cex_labels)
       }
     } else {
       # print(par("usr"))
@@ -174,10 +181,10 @@ plotPlots_AIC <- function(dat_gene,locs_gene,gene,MSP_amplicon,primer_annot_gene
       polygon(x_poly,y_poly,col="green")
       if(n_transcript_ids>10){
           text(dat_transcript$transcription_start_site[1]+((par("usr")[2]-par("usr")[1])/100*diff_units_transcript_id*0.2),i,
-            labels=dat_transcript$ensembl_transcript_id[1],cex=cex_labels*0.35)
+            labels=label_transcript,cex=cex_labels*0.35)
       } else {
         text(dat_transcript$transcription_start_site[1]+((par("usr")[2]-par("usr")[1])/100*diff_units_transcript_id),i,
-            labels=dat_transcript$ensembl_transcript_id[1],cex=cex_labels)
+            labels=label_transcript,cex=cex_labels)
       }
     }
   }
@@ -185,11 +192,11 @@ plotPlots_AIC <- function(dat_gene,locs_gene,gene,MSP_amplicon,primer_annot_gene
   par(xpd=T)
   if (length(to_remove)==1){
     legend(par("usr")[2]+((par("usr")[2]-par("usr")[1])/100*2.5),par("usr")[4],
-           c("TSS","Exon","Intron",paste(length(to_remove)," transcript was ommited (not ",sep=""),"in plotting range)"),
+           c("TSS","Exon","Intron",paste(length(to_remove)," transcript was omitted (not ",sep=""),"in plotting range)"),
            pch=c(15,15,NA,NA,NA),lty=c(NA,NA,1,NA,NA),col=c("green","red","black",NA,NA),cex=cex_legend)
   } else {
     legend(par("usr")[2]+((par("usr")[2]-par("usr")[1])/100*2.5),par("usr")[4],
-           c("TSS","Exon","Intron",paste(length(to_remove)," transcripts were ommited (not ",sep=""),"in plotting range)"),
+           c("TSS","Exon","Intron",paste(length(to_remove)," transcripts were omitted (not ",sep=""),"in plotting range)"),
            pch=c(15,15,NA,NA,NA),lty=c(NA,NA,1,NA,NA),col=c("green","red","black",NA,NA),cex=cex_legend)
   }
   par(xpd=F)
