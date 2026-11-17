@@ -16,10 +16,10 @@ channels:
   - bioconda
 dependencies:
   # Pre-processing, alignment and methylation calling (TargetedBisulphiteSeq.bash)
-  - fastqc=0.11.9                     # CHECK: Methods; not in the server environment
-  - trim-galore=0.6.10                # CHECK: Methods; not in the server environment
-  - cutadapt                          # CHECK: version wrapped by Trim Galore; not in the server environment
-  - bismark=0.24.1                    # server environment (Methods say v0.22.3)
+  - fastqc=0.11.9                     # trimming environment on the server
+  - trim-galore=0.6.7                 # trimming environment on the server
+  - cutadapt=4.1                      # wrapped by Trim Galore; trimming environment on the server
+  - bismark=0.24.1                    # server environment
   - bowtie2=2.5.1                     # server environment
   - samtools=1.6                      # server environment
   - multiqc=1.17                      # server environment
@@ -49,6 +49,5 @@ dependencies:
   - bioconductor-rsamtools=2.14.0
   - bioconductor-rtracklayer=1.58.0
 
-# Versions actually used, run on the analysis server:
-#   trim_galore --version; cutadapt --version; fastqc --version   (in the environment/module used for trimming)
+# Version still to check on the analysis server:
 #   Rscript -e 'packageVersion("patchwork")'                       (where the rebuttal figure was made)
