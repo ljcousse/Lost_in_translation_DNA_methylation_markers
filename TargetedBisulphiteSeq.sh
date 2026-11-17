@@ -21,12 +21,12 @@ dir_mapping_bis=$dir_work/mapping_bis
 dir_wgbstools=$dir_work/wgbs_tools
 dir_output_wgbstools=$dir_work/output_wgbstools
 
-mkdir $dir_genome
-mkdir $dir_cov
-mkdir $dir_fastq
-mkdir $dir_trimmed
-mkdir $dir_mapping
-mkdir $dir_output_wgbstools
+mkdir -p $dir_genome
+mkdir -p $dir_cov
+mkdir -p $dir_fastq
+mkdir -p $dir_trimmed
+mkdir -p $dir_mapping
+mkdir -p $dir_output_wgbstools
 
 echo $dir_fastq_1
 echo $dir_fastq_2
@@ -94,27 +94,30 @@ do
 	((i=i%N)); ((i++==0)) && wait
 	trim_galore -q 20 --illumina -o $dir_trimmed --paired --length 15 --retain_unpaired --path_to_cutadapt cutadapt $dir_fastq/$base_file*_R1*.fastq  $dir_fastq/$base_file*_R2*.fastq  &
 done
+wait
 )
 
 ##########
 # FastQC #
 ##########
 
-mkdir fastqc
+mkdir -p fastqc
 dir_fastqc=$dir_work/fastqc
 
 for file in $(ls $dir_fastq)
 do
 	fastqc --outdir $dir_fastqc $dir_fastq/$file &
 done
+wait
 
-mkdir fastqc_trimmed
+mkdir -p fastqc_trimmed
 dir_fastqc_trimmed=$dir_work/fastqc_trimmed
 
 for file in $(ls $dir_trimmed | grep .fq$ | grep -v unpaired)
 do
 	fastqc --outdir $dir_fastqc_trimmed $dir_trimmed/$file &
 done
+wait
 
 
 ###########
@@ -148,6 +151,7 @@ do
 	((i=i%N)); ((i++==0)) && wait
 	bismark -q --non_bs_mm --bowtie2 -p 4 -o $dir_work/mapping --prefix $sample $dir_genome -1 $dir_work/trimmed/$sample\_L001_R1_001_val_1.fq -2 $dir_work/trimmed/$sample\_L001_R2_001_val_2.fq &
 done
+wait
 )
 
 # Stringent mapping
@@ -209,7 +213,8 @@ do
 	((i=i%N)); ((i++==0)) && wait
 	rm $file &
 done
-) 
+wait
+)
 
 ls $dir_mapping_bis | wc -l
 ls $dir_mapping_bis | grep .bam$ | wc -l
@@ -222,7 +227,8 @@ do
 	((i=i%N)); ((i++==0)) && wait
 	samtools sort -n $file -o ${file//_sorted/} &
 done
-) 
+wait
+)
 
 ls $dir_mapping_bis | wc -l
 ls $dir_mapping_bis | grep .bam$ | wc -l
@@ -235,7 +241,8 @@ do
 	((i=i%N)); ((i++==0)) && wait
 	rm $file &
 done
-) 
+wait
+)
 
 ls $dir_mapping_bis | wc -l
 ls $dir_mapping_bis | grep .bam$ | wc -l
@@ -248,7 +255,7 @@ ls $dir_mapping_bis | grep .bai$ | wc -l
 
 cd $dir_work
 
-mkdir meth
+mkdir -p meth
 dir_meth=$dir_work/meth
 
 # Bismark methylation extractor
@@ -258,7 +265,8 @@ for file in $(ls mapping_bis/ | grep .bam$)
 do
 	((i=i%N)); ((i++==0)) && wait
 	bismark_methylation_extractor -p --no_overlap --comprehensive --output $dir_meth mapping_bis/$file &
-done 
+done
+wait
 )
 
 sleep 30
@@ -278,6 +286,7 @@ do
 	#echo $file
 	bismark2bedGraph --scaffolds -o $file.bedGraph $file &
 done
+wait
 )
 
 sleep 30
@@ -293,6 +302,7 @@ do
 	((i=i%N)); ((i++==0)) && wait
 	pigz -d $file &
 done
+wait
 )
 
 cd $dir_work
@@ -329,7 +339,7 @@ head -2 GREM1_sorted.fa
 
 for file in $(ls $dir_mapping | grep .bam$)
 do 
-	samtools view $dir_mapping$file | awk '$3==16 && $4>58495163-1 && $4<58499903-1 {print ">"NR"\t"$4"\n"$10}' >> NDRG4.fa
+	samtools view $dir_mapping/$file | awk '$3==16 && $4>58495163-1 && $4<58499903-1 {print ">"NR"\t"$4"\n"$10}' >> NDRG4.fa
 done
 
 awk '/^>/{key=$2} {print key, NR, $0}' NDRG4.fa | sort -k1,1 -k2,2n | cut -d' ' -f3- > NDRG4_sorted.fa
@@ -346,7 +356,7 @@ wgbs_tools/wgbstools init_genome --fasta_path $dir_genome/*.fa hg37_87
 
 # sort bams
 dir_mapping_bis_sorted=$dir_work/mapping_bis_sorted 
-mkdir $dir_mapping_bis_sorted
+mkdir -p $dir_mapping_bis_sorted
 
 N=16
 (
@@ -355,8 +365,10 @@ do
 	((i=i%N)); ((i++==0)) && wait
 	samtools sort $dir_mapping_bis/$file -o $dir_mapping_bis_sorted/${file//_sorted/} &
 done
-) 
+wait
+)
 
 # create pat & beta files
 wgbs_tools/wgbstools bam2pat --genome hg37_87 $dir_mapping_bis_sorted/*.bam -o $dir_output_wgbstools
-wgbs_tools/wgbstools vis segmentation_wgbs/pat/run_231_18_S18.run_231_18_S18_L001_R1_001_val_1_bismark_bt2_pe.pat.gz -r 16:58495134-58495243
+# Example: visualise the read-level patterns of one sample over NDRG4_8 (not needed for the analysis)
+# wgbs_tools/wgbstools vis $dir_output_wgbstools/run_231_18_S18.run_231_18_S18_L001_R1_001_val_1_bismark_bt2_pe.pat.gz -r 16:58495134-58495243
