@@ -2651,11 +2651,35 @@ for (amplicon in amplicons_s3){
 
 
 
-############################################
-# Save workspace for the sensitivity script #
-############################################
-# TargetedBisulphite_sensitivity.R loads this workspace, so the sensitivity analyses run without the main analysis
-save.image(file = paste(project_dir,"TargetedBisulphite_analysis.RData",sep=""))
+###########################################
+# Objects for the sensitivity analyses    #
+###########################################
+# Only the objects TargetedBisulphite_sensitivity.R uses (not the whole workspace), so the sensitivity analyses can be
+# run without rerunning the main analysis. List: everything the sensitivity script and the functions it calls use
+# before defining it themselves.
+
+## Define settings
+#####################
+outdir_sensitivity <- paste(project_dir,"output_for_sensitivity_analysis/",sep="")
+dir.create(outdir_sensitivity, showWarnings = F, recursive = T)
+outfile_sensitivity <- paste(outdir_sensitivity,"objects_for_sensitivity_analysis.Rda",sep="")
+objects_sensitivity <- c("aic_pair_diff", "amplicons", "avAIC_table_ext", "build_pair_data", "ccRCC_annot_sort",
+                         "ccRCC_annot_sort_BS", "CRC_annot_sort", "CRC_annot_sort_BS", "dat_correl",
+                         "dat_correl_filt", "dat_correl_not_in_primer", "dat_GREM1_ROC_logit_perCpG",
+                         "dat_LY75_ROC_logit_perCpG", "dat_NDRG4_ROC_logit_perCpG", "melanoma_annot_sort",
+                         "melanoma_annot_sort_BS", "meth_state", "meth_state2", "Mval_GREM1_sort", "Mval_LY75_sort",
+                         "Mval_NDRG4_sort", "n_swap", "pair_info", "primer_annot_GREM1", "primer_annot_list",
+                         "primer_annot_LY75", "primer_annot_NDRG4", "res_swap", "rng_kind_ori", "sample_annot",
+                         "summary_swap", "swap_pair")
+
+## Save
+#####################
+mask_missing <- !sapply(objects_sensitivity, exists)
+if (sum(mask_missing) > 0){
+  stop(sprintf("Objects for the sensitivity analyses not found: %s", paste(objects_sensitivity[mask_missing], collapse = ", ")))
+}
+save(list = objects_sensitivity, file = outfile_sensitivity)
+print(sprintf("Saved %d objects for the sensitivity analyses: %s", length(objects_sensitivity), outfile_sensitivity))
 
 #############
 # Close log #

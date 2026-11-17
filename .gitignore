@@ -21,6 +21,7 @@ AIC_plots*/*
 waterfall_plots/*
 suppl_fig_3/*
 simulation_intra_amplicon/*
+output_for_sensitivity_analysis/*
 *.RData
 
 # Always

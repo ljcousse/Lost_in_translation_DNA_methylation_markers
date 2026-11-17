@@ -8,7 +8,8 @@
 ###############################################
 
 # Sensitivity analyses and comparisons of the revision (Supplementary Table 5, Supplementary Figure 4, rebuttal).
-# Runs on the workspace saved at the end of TargetedBisulphite_analysis.R: run that script first.
+# Runs on the objects saved at the end of TargetedBisulphite_analysis.R (output_for_sensitivity_analysis/): run that
+# script first.
 
 ######################
 # Parameter settings #
@@ -26,13 +27,11 @@ readRenviron(config_file)
 project_dir <- Sys.getenv("PROJECT_DIR")
 if (!dir.exists(project_dir)) stop("PROJECT_DIR does not exist: ", project_dir)
 
-# Workspace of the main analysis (overwrites project_dir with the value of the main run; reset below)
-workspace_file <- file.path(project_dir, "TargetedBisulphite_analysis.RData")
-if (!file.exists(workspace_file)){
-  stop("Workspace not found: ", workspace_file, ". Run TargetedBisulphite_analysis.R first.")
+# Objects of the main analysis
+infile_sensitivity <- file.path(project_dir, "output_for_sensitivity_analysis", "objects_for_sensitivity_analysis.Rda")
+if (!file.exists(infile_sensitivity)){
+  stop("Objects of the main analysis not found: ", infile_sensitivity, ". Run TargetedBisulphite_analysis.R first.")
 }
-load(workspace_file)
-project_dir <- Sys.getenv("PROJECT_DIR")
 
 # Log file: console output (also shown on screen) + messages/warnings/errors (log only)
 log_file <- file.path(project_dir, paste0("TargetedBisulphite_sensitivity_", format(Sys.time(), "%Y%m%d_%H%M"), ".log"))
@@ -41,10 +40,12 @@ sink(log_con, split = TRUE)
 sink(log_con, type = "message")
 print(sprintf("Start: %s", format(Sys.time())))
 print(sprintf("Log file: %s", log_file))
-print(sprintf("Workspace: %s", workspace_file))
 # Exactly one trailing "/" (paths below are built with paste(project_dir, ..., sep=""))
 project_dir <- paste0(sub("/+$", "", project_dir), "/")
 setwd(project_dir)
+
+objects_loaded <- load(infile_sensitivity)
+print(sprintf("Loaded %d objects of the main analysis: %s", length(objects_loaded), infile_sensitivity))
 
 #############################
 # Loading required packages #
