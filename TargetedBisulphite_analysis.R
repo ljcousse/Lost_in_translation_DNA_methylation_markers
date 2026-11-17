@@ -1141,13 +1141,14 @@ dev.off()
 
 source(file.path(project_dir,"Intra_amplicon_diff_functions.R"))
 
-#########################################################################
-# Swap test for differences in clinical value between CpGs (E18)        #
-#########################################################################
+##########################################################################################
+# Permutation test (within samples) for differences in clinical value between CpGs (E18) #
+##########################################################################################
 # Null: both CpGs have equal clinical value. M-values z-scored (does not change the AIC), per sample the two values
 # swapped with probability 0.5, pair Delta AIC recomputed. All pairs of target-sequence CpGs within an amplicon.
 # Models: NDRG4 Tissue ~ CpG + Patient_ID; GREM1/LY75 Surv ~ CpG only (non-nested), both CpGs on the same samples.
-# The original permutation test (null: neither CpG is informative) is in TargetedBisulphite_sensitivity.R (comparison).
+# The original permutation test (values permuted between samples; null: neither CpG is informative) is in
+# TargetedBisulphite_sensitivity.R (comparison).
 
 ## Define settings
 #####################
@@ -1222,7 +1223,7 @@ swap_pair <- function(b, dat, gene, covariates = ""){
 
 get_pval_list_swap <- function(gene){
   # Per amplicon a table as returned by perform_AIC_analysis (CpG_1, CpG_2, AIC_1, AIC_2, delta_AIC, pval, fdr),
-  # with the swap p-value as pval and the within-amplicon BH value as fdr
+  # with the permutation p-value (within samples) as pval and the within-amplicon BH value as fdr
   res_swap_gene <- res_swap[res_swap$Gene == gene,]
   pval_list_swap <- list()
   for (amplicon in unique(res_swap_gene$Amplicon)){
@@ -1236,7 +1237,7 @@ get_pval_list_swap <- function(gene){
   return(pval_list_swap)
 }
 
-## Swap test
+## Permutation test (within samples)
 #####################
 primer_CpG_ids <- dat_correl$ID[dat_correl$dist_CpG == 0 & !is.na(dat_correl$dist_CpG)]
 pair_info <- list(NDRG4 = list(Mval = Mval_NDRG4_sort, annot = CRC_annot_sort, cn = c("Tissue","Patient_ID"), primer_annot = primer_annot_NDRG4),
@@ -1250,7 +1251,7 @@ for (gene in names(pair_info)){
   info <- pair_info[[gene]]
   pairs <- get_CpG_pairs(info$primer_annot, info$Mval)
   mask_pairs <- !(pairs$CpG_1 %in% primer_CpG_ids) & !(pairs$CpG_2 %in% primer_CpG_ids)
-  print(sprintf("%s: swap test for %d target-CpG pairs (pairs with a primer CpG removed: %d/%d)", gene, sum(mask_pairs),
+  print(sprintf("%s: permutation test (within samples) for %d target-CpG pairs (pairs with a primer CpG removed: %d/%d)", gene, sum(mask_pairs),
                 sum(!mask_pairs), length(mask_pairs)))
   pairs <- pairs[mask_pairs,]
   for (r in 1:nrow(pairs)){
@@ -1290,10 +1291,10 @@ for (gene in unique(summary_swap$Gene)){
 }
 # expect (v18): NDRG4 8, GREM1 5, LY75 5 amplicons with a star; LY75 6 pairs (13 expected by chance)
 
-#########################################################
-# Figure 5: intra-amplicon differences, swap test (E18) #
-#########################################################
-# Stars from the swap test (target-sequence CpG pairs, unadjusted p): * p < 0.05, ** p < 0.005, one cut-off for all
+################################################################
+# Figure 5: intra-amplicon differences, permutation test (E18) #
+################################################################
+# Stars from the permutation test (within samples; target-sequence CpG pairs, unadjusted p): * p < 0.05, ** p < 0.005, one cut-off for all
 # genes (Louis 2026-11-16).
 for (gene in c("NDRG4","GREM1","LY75")){
   pval_list_swap <- get_pval_list_swap(gene)
@@ -1301,7 +1302,7 @@ for (gene in c("NDRG4","GREM1","LY75")){
   reduced_AIC_analysis(gene, pval_list_swap, pval_cutoff_fig5, dat_AIC_gene, star_cutoffs = star_cutoffs_fig5, dir = outdir_fig5)
 }
 n_fig5 <- length(list.files(outdir_fig5, pattern = "jpg$"))
-print(sprintf("Figure 5 (swap test): %d amplicon plots in %s", n_fig5, outdir_fig5))
+print(sprintf("Figure 5 (permutation test): %d amplicon plots in %s", n_fig5, outdir_fig5))
 # expect: 18 (8 NDRG4, 5 GREM1, 5 LY75)
 
 ####################################
@@ -2392,7 +2393,7 @@ write.table(avAIC_table_ext,file="avAIC_table_ext.txt",col.names=T,row.names=F,q
 ##########################################################
 # Per amplicon (genomic order as in Supplementary Table 6): mean and minimum CpG-based Delta AIC (grey line between them) and the
 # read-based Delta AIC (height + density, rbAIC_hybr). Star after the amplicon name as in the Figure 4 legend:
-# * smallest swap-test p < 0.05 over the target-sequence CpG pairs of the amplicon (res_swap; E18, one cut-off for all genes).
+# * smallest permutation-test p < 0.05 over the target-sequence CpG pairs of the amplicon (res_swap; E18, one cut-off for all genes).
 
 ## Define settings
 #####################
@@ -2408,7 +2409,7 @@ shapes_table3 <- setNames(c(16, 17, 18), measures_table3)
 ## Functions
 #####################
 get_min_pval_intra <- function(amplicon){
-  # Smallest swap-test p over the target-sequence CpG pairs of the amplicon (NA if the amplicon has no pairs)
+  # Smallest permutation-test p over the target-sequence CpG pairs of the amplicon (NA if the amplicon has no pairs)
   mask_amplicon <- res_swap$Amplicon == amplicon
   if (sum(mask_amplicon) == 0){
     return(NA)

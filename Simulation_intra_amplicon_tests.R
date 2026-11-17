@@ -8,9 +8,9 @@
 # Supplementary Figure (ToDo E18, R-E18 in the rebuttal): behaviour of the two tests for a difference in clinical value
 # between two CpGs of the same amplicon, in the prognostic setting (Cox regression, n = 26 as in the ccRCC and melanoma
 # cohorts).
-#  - Permutation test (original submission): the observed Delta AIC = AIC(CpG 2) - AIC(CpG 1) is compared with the Delta
+#  - Permutation between samples (original submission): the observed Delta AIC = AIC(CpG 2) - AIC(CpG 1) is compared with the Delta
 #    AIC after permuting the values of each CpG independently (null = neither CpG is informative).
-#  - Swap test (revision): both CpGs z-scored, per sample the two values swapped with probability 0.5 (null = both CpGs
+#  - Permutation within samples (revision): both CpGs z-scored, per sample the two values swapped with probability 0.5 (null = both CpGs
 #    equally informative); p = fraction of swapped data sets with |Delta AIC| >= observed |Delta AIC|.
 # Data: a latent methylation factor drives survival (log hazard ratio beta per SD); each CpG = r * latent + noise, so a
 # CpG with a higher r carries more clinical value. Equal r = equal clinical value.
@@ -133,7 +133,7 @@ for (s in 1:nrow(settings)){
                                          ci_low = ci[1], ci_high = ci[2], mean_events = mean(res_s[,"n_events"])))
   }
 }
-results$test <- ifelse(results$test == "pval_perm", "Permutation test (original)", "Swap test (revision)")
+results$test <- ifelse(results$test == "pval_perm", "Permutation between samples (original)", "Permutation within samples (revision)")
 print(results)
 write.table(results, outfile_results, col.names = T, row.names = F, quote = F, sep = "\t")
 # expect (earlier pilot, 100 data sets): equal value, beta 0: ~0.03 both; beta 1.0: perm ~0.26, swap ~0.04;
@@ -144,8 +144,8 @@ write.table(results, outfile_results, col.names = T, row.names = F, quote = F, s
 set.seed(seed_sim)
 dat_example <- simulate_data(beta = 1.5, r1 = 0.85, r2 = 0.85)
 obs_example <- get_delta_aic(dat_example, dat_example$cpg_1, dat_example$cpg_2)
-dat_null <- rbind(data.frame(test = "Permutation test (original)", delta_AIC = get_null_permutation(dat_example)),
-                  data.frame(test = "Swap test (revision)", delta_AIC = get_null_swap(dat_example)))
+dat_null <- rbind(data.frame(test = "Permutation between samples (original)", delta_AIC = get_null_permutation(dat_example)),
+                  data.frame(test = "Permutation within samples (revision)", delta_AIC = get_null_swap(dat_example)))
 print(sprintf("Example (two equally informative CpGs, beta 1.5): observed Delta AIC %.2f, %d events",
               obs_example, sum(dat_example$event)))
 write.table(dat_null, outfile_example, col.names = T, row.names = F, quote = F, sep = "\t")
@@ -153,7 +153,7 @@ write.table(dat_null, outfile_example, col.names = T, row.names = F, quote = F, 
 ########
 # Plot #
 ########
-colours_test <- c("Permutation test (original)" = "#eb6834", "Swap test (revision)" = "#2a78d6")
+colours_test <- c("Permutation between samples (original)" = "#eb6834", "Permutation within samples (revision)" = "#2a78d6")
 
 p1 <- ggplot(dat_null, aes(x = delta_AIC, fill = test)) +
   geom_histogram(bins = 60, alpha = 0.6, position = "identity") +

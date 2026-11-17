@@ -397,8 +397,8 @@ print(cor.test(dat_correl_nofloor_filt$dist_CpG, dat_correl_nofloor_filt$deltaAI
 ##################################################################
 # Intra-amplicon differences: original permutation test (E18)    #
 ##################################################################
-# Test of the original submission (null: neither CpG is informative), kept for comparison with the swap test of the
-# main analysis (rebuttal, Supplementary Figure 4). Plots in AIC_plots/ and AIC_plots_red/.
+# Test of the original submission (values of each CpG permuted between samples; null: neither CpG is informative), kept
+# for comparison with the permutation test (within samples) of the main analysis (rebuttal, Supplementary Figure 4). Plots in AIC_plots/ and AIC_plots_red/.
 
 source(file.path(project_dir,"Intra_amplicon_diff_functions.R"))
 
@@ -483,17 +483,17 @@ pval_cutoff_red <- 0.10
 reduced_AIC_analysis("LY75",pval_list_LY75,pval_cutoff_red,dat_LY75_ROC_logit_perCpG)
 
 
-## Comparison with the swap test (main analysis)
+## Comparison with the permutation test within samples (main analysis)
 #####################
 key_perm <- paste(pval_total_list$CpG_1, pval_total_list$CpG_2, sep = "|")
 key_swap <- paste(res_swap$CpG_1, res_swap$CpG_2, sep = "|")
 if (sum(key_swap%in%key_perm) != length(key_swap)){
-  stop("Swap-test pairs missing in the permutation test")
+  stop("Pairs of the main analysis missing in the original permutation test")
 }
 res_swap_perm <- res_swap
 res_swap_perm$delta_AIC_test <- as.numeric(setNames(pval_total_list$delta_AIC, key_perm)[key_swap])
 res_swap_perm$pval_perm <- as.numeric(setNames(pval_total_list$pval, key_perm)[key_swap])
-print(sprintf("Max |Delta AIC swap test - permutation test| (z-scoring must not change the AIC): %.4f",
+print(sprintf("Max |Delta AIC main test - original test| (z-scoring must not change the AIC): %.4f",
               max(abs(res_swap_perm$delta_AIC_obs - res_swap_perm$delta_AIC_test))))
 # expect: ~0
 write.table(res_swap_perm, "intra_amplicon_swap_vs_permutation.txt", col.names = T, row.names = F, quote = F, sep = "\t")
@@ -505,24 +505,24 @@ print(summary_swap_perm)
 write.table(summary_swap_perm, "intra_amplicon_swap_vs_permutation_summary.txt", col.names = T, row.names = F, quote = F, sep = "\t")
 for (gene in unique(summary_swap_perm$Gene)){
   x <- summary_swap_perm[summary_swap_perm$Gene == gene,]
-  print(sprintf("%s: amplicons with a star - permutation test %d, swap test %d (of %d); pairs significant - permutation %d, swap %d",
+  print(sprintf("%s: amplicons with a star - original test %d, main test %d (of %d); pairs significant - original %d, main %d",
                 gene, sum(x$star_perm), sum(x$star_swap), nrow(x), sum(x$n_sig_perm), sum(x$n_sig_swap)))
 }
 
-#################################################################
-# Sensitivity LY75: intra-amplicon swap test with sequencing run #
-#################################################################
+########################################################################
+# Sensitivity LY75: intra-amplicon permutation test with sequencing run #
+########################################################################
 
-## LY75: swap test with sequencing run in both CpG models (R3.M6a, Louis 2026-11-17)
+## LY75: permutation test (within samples) with sequencing run in both CpG models (R3.M6a, Louis 2026-11-17)
 #####################
-# Surv ~ CpG_a + Run vs Surv ~ CpG_b + Run, same target-CpG pairs, swaps, seed and cut-off as the main swap test.
+# Surv ~ CpG_a + Run vs Surv ~ CpG_b + Run, same target-CpG pairs, permutations, seed and cut-off as the main test.
 # Decision rule (Louis): if the LY75 intra-amplicon results do not change, the main analysis stays without run.
 RNGkind("L'Ecuyer-CMRG")
 set.seed(42)
 info_LY75_run <- pair_info$LY75
 info_LY75_run$cn <- c(info_LY75_run$cn, "Run")
 pairs_LY75 <- res_swap[res_swap$Gene == "LY75",]
-print(sprintf("LY75: swap test with Run for %d target-CpG pairs", nrow(pairs_LY75)))
+print(sprintf("LY75: permutation test with Run for %d target-CpG pairs", nrow(pairs_LY75)))
 res_swap_LY75_run <- NULL
 for (r in 1:nrow(pairs_LY75)){
   dat_r <- build_pair_data(info_LY75_run, "LY75", pairs_LY75$CpG_1[r], pairs_LY75$CpG_2[r])
@@ -566,7 +566,7 @@ print(sprintf("LY75 samples per pair with Run: %d-%d",
 ##############################################
 # Simulation of the intra-amplicon tests (E18) #
 ##############################################
-# Supplementary Figure 4: permutation test (original) vs swap test (revision). Run last: the script sets its own seed
+# Supplementary Figure 4: original permutation test (between samples) vs revised permutation test (within samples). Run last: the script sets its own seed
 # and RNG kind. Output in simulation_intra_amplicon/ (~10-20 min on 40 cores).
 source(file.path(project_dir,"Simulation_intra_amplicon_tests.R"))
 
