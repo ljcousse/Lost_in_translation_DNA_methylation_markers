@@ -2468,9 +2468,22 @@ g <- ggplot(dat_fig_table3, aes(y = label)) +
   theme_bw() +
   theme(legend.position = "top", panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
         strip.text.y = element_text(angle = 0, face = "italic"),
-        axis.text.y = element_text(hjust = 0)) # amplicon names left-aligned (Louis 2026-11-18)
+        axis.text.y = element_text(hjust = 0), axis.ticks.y = element_blank(), axis.ticks.length.y = unit(0, "pt"))
+
+# facet_grid draws one y axis per gene, right-aligned against its own panel (ggplot2 3.4): with hjust = 0 the amplicon
+# names would start at a different position per gene. Every left axis is moved to the left edge of the shared axis
+# column, so all names start at the same position (no y ticks: they would no longer touch the panel).
+gt_fig4 <- ggplotGrob(g)
+idx_axis_left <- grep("^axis-l", gt_fig4$layout$name)
+for (i in idx_axis_left){
+  if (is.null(gt_fig4$grobs[[i]]$vp)){
+    next
+  }
+  gt_fig4$grobs[[i]]$vp <- grid::viewport(x = unit(0, "npc"), width = gt_fig4$grobs[[i]]$vp$width, just = "left")
+}
 cairo_pdf(outfile_table3, width = 7, height = 9) # cairo: Delta glyph (ToDo E20)
-print(g)
+grid::grid.newpage()
+grid::grid.draw(gt_fig4)
 dev.off()
 
 

@@ -159,7 +159,7 @@ p1 <- ggplot(dat_null, aes(x = delta_AIC, fill = test)) +
   geom_histogram(bins = 60, alpha = 0.6, position = "identity") +
   geom_vline(xintercept = c(-1, 1) * abs(obs_example), linetype = "dashed") +
   scale_fill_manual(values = colours_test) +
-  labs(x = expression(Delta*"AIC between the two CpGs"), y = "Number of permuted / swapped data sets", fill = NULL,
+  labs(x = expression(Delta*"AIC between the two CpGs"), y = "Number of permuted data sets", fill = NULL,
        title = "A. Null distributions, two equally informative CpGs") +
   theme_bw() +
   theme(legend.position = "top")
