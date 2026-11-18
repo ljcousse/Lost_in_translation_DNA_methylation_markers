@@ -7,7 +7,7 @@
 ###############################################
 ###############################################
 
-# Sensitivity analyses and comparisons of the revision (Supplementary Table 5, Supplementary Figure 4, rebuttal).
+# Sensitivity analyses and comparisons of the revision (Supplementary Figure 4, rebuttal).
 # Runs on the objects saved at the end of TargetedBisulphite_analysis.R (output_for_sensitivity_analysis/): run that
 # script first.
 

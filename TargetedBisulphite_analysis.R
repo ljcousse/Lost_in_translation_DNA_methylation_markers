@@ -2391,7 +2391,7 @@ write.table(avAIC_table_ext,file="avAIC_table_ext.txt",col.names=T,row.names=F,q
 ##########################################################
 # Figure 4: Delta AIC per amplicon (former Table 3; E14) #
 ##########################################################
-# Per amplicon (genomic order as in Supplementary Table 6): mean and minimum CpG-based Delta AIC (grey line between them) and the
+# Per amplicon (genomic order as in Supplementary Table 5): mean and minimum CpG-based Delta AIC (grey line between them) and the
 # read-based Delta AIC (height + density, rbAIC_hybr). Star after the amplicon name as in the Figure 4 legend:
 # * smallest permutation-test p < 0.05 over the target-sequence CpG pairs of the amplicon (res_swap; E18, one cut-off for all genes).
 
@@ -2467,7 +2467,8 @@ g <- ggplot(dat_fig_table3, aes(y = label)) +
   labs(x = expression(Delta*"AIC compared with the baseline model"), y = NULL, colour = NULL, shape = NULL) +
   theme_bw() +
   theme(legend.position = "top", panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
-        strip.text.y = element_text(angle = 0, face = "italic"))
+        strip.text.y = element_text(angle = 0, face = "italic"),
+        axis.text.y = element_text(hjust = 0)) # amplicon names left-aligned (Louis 2026-11-18)
 cairo_pdf(outfile_table3, width = 7, height = 9) # cairo: Delta glyph (ToDo E20)
 print(g)
 dev.off()

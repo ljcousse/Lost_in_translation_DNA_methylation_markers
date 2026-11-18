@@ -68,8 +68,8 @@ Both permutation tests and the simulation use `parallel::mclapply` with 40 cores
 | `supplementary_table_1.txt` | Primer and amplicon annotation with primer-CpG methylation (Supplementary Table 1) |
 | `res_dupl_CpG.txt` | CpGs covered by two amplicons, paired t-test on M-values with Benjamini-Hochberg correction (Supplementary Table 3) |
 | `NDRG4_AIC_table.txt`, `GREM1_AIC_table.txt`, `LY75_AIC_table.txt` | ΔAIC per CpG (Supplementary Table 4) |
-| `*_AIC_table_nonnested.txt`, `*_avAIC_nonnested.txt`, `LY75_AIC_table_run.txt`, `LY75_avAIC_run.txt`, `intra_amplicon_swap_test_LY75_run.txt` | Sensitivity analyses (Supplementary Table 5; sensitivity script) |
-| `avAIC_table_ext.txt` | Mean and minimum CpG-based ΔAIC and read-based ΔAIC per amplicon (Supplementary Table 6) |
+| `*_AIC_table_nonnested.txt`, `*_avAIC_nonnested.txt`, `LY75_AIC_table_run.txt`, `LY75_avAIC_run.txt`, `intra_amplicon_swap_test_LY75_run.txt` | Sensitivity analyses (sensitivity script; reported in the response to the reviewers) |
+| `avAIC_table_ext.txt` | Mean and minimum CpG-based ΔAIC and read-based ΔAIC per amplicon (Supplementary Table 5) |
 | `violin_deltaAIC_CpG_*.jpg`, `AIC_plots/cpg_density_profile.pdf` | Primer-CpG analyses (Supplementary Figure 1) and CpG density per gene region |
 | `suppl_fig_3/` | Supplementary Figure 3 |
 | `simulation_intra_amplicon/` | Simulation of the intra-amplicon tests (Supplementary Figure 4; sensitivity script) |
