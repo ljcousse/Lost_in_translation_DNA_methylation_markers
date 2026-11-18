@@ -1917,7 +1917,7 @@ CpG_in_primer <- rownames(dat_correl)[dat_correl$dist_CpG==0 & !is.na(dat_correl
 dat_plot_rb <- list()
 counter <- 1
 color_cometh <- FALSE
-plot_paper <- FALSE
+plot_paper <- TRUE # paper style: "sample: days" titles (Figure 3, Supplementary Information 1; Louis 2026-11-18)
 for (amplicon in amplicons){
   print(sprintf("Plotting for %s",amplicon))
 
