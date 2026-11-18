@@ -25,6 +25,7 @@ output_for_sensitivity_analysis/*
 *.RData
 
 # Always
+*.out
 tmp/*
 *.jar
 *.bedGraph
