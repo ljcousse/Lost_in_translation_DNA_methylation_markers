@@ -235,13 +235,25 @@ intra_amplicon_plot <- function(name,AIC_amplicon,pval_sign,gene,k,dir="AIC_plot
   pos_x <-as.numeric(gsub("^.+_","",gsub("_[NDRG|LY|GREM].+$","",AIC_amplicon$CpG)))
 
   jpeg(paste0(dir,name,".jpg"))
+  layout(matrix(1:2, ncol = 1), heights = c(1, 5))
+  par(cex = 1)
 
-  plot(pos_x,AIC_amplicon$AIC,type="l") # this line is just to get limits for plots in next command
-  add_space <- (par("usr")[4]-par("usr")[3])*0.05*(nrow(pval_sign)+1)
-  # print(add_space)
+  # Top strip: position of the amplicon within the region shown in Figure 2 (all amplicons of the gene grey, this one black)
+  region_x <- c(min(primer_annot_list[[gene]]$begin), max(primer_annot_list[[gene]]$end))
+  par(mar = c(0.5, 4.1, 2.5, 2.1))
+  plot(NA, xlim = region_x, ylim = c(0, 1), axes = F, xlab = "", ylab = "", main = name)
+  segments(region_x[1], 0.5, region_x[2], 0.5, col = "grey60")
+  rect(primer_annot_list[[gene]]$begin, 0.25, primer_annot_list[[gene]]$end, 0.75, col = "grey80", border = NA)
+  rect(primer_annot_list[[gene]]$begin[k], 0.05, primer_annot_list[[gene]]$end[k], 0.95, col = "black", border = NA)
 
-  plot(pos_x,AIC_amplicon$AIC,type="l",main=name,
-       ylim=c((par("usr")[3]-add_space),par("usr")[4]),
+  # y limits of a default plot (range + 4% on each side), extended below for the significance segments
+  par(mar = c(5.1, 4.1, 0.5, 2.1))
+  range_AIC <- range(AIC_amplicon$AIC)
+  usr_y <- range_AIC + c(-1, 1) * 0.04 * (range_AIC[2] - range_AIC[1])
+  add_space <- (usr_y[2]-usr_y[1])*0.05*(nrow(pval_sign)+1)
+
+  plot(pos_x,AIC_amplicon$AIC,type="l",
+       ylim=c((usr_y[1]-add_space),usr_y[2]),
        xlim=c(primer_annot_list[[gene]]$begin[k]-n_bp_add,primer_annot_list[[gene]]$end[k]+n_bp_add),
        xlab="Pos",ylab="AIC",cex.lab=cex_AIC_plots, cex.axis=cex_AIC_plots)
 
