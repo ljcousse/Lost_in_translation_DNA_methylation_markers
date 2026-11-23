@@ -6,7 +6,7 @@
 # packages, and sessionInfo() of TargetedBisulphite_analysis (run 2026-11-13; R 4.2.3, Bioconductor 3.16) for the R
 # packages installed outside conda (Bioconductor packages, precrec). conda-forge writes R version dashes as underscores
 # (survival 3.5-7 -> 3.5_7). Only the tools and R packages used by the scripts in this repository are listed; conda
-# resolves their dependencies. "CHECK": not in the server environment - fill in the version that was actually used.
+# resolves their dependencies.
 #
 # Not available via conda: wgbs_tools (read-based .pat files), install from https://github.com/nloyfer/wgbs_tools
 
@@ -15,7 +15,7 @@ channels:
   - conda-forge
   - bioconda
 dependencies:
-  # Pre-processing, alignment and methylation calling (TargetedBisulphiteSeq.bash)
+  # Pre-processing, alignment and methylation calling (TargetedBisulphiteSeq.sh)
   - fastqc=0.11.9                     # trimming environment on the server
   - trim-galore=0.6.7                 # trimming environment on the server
   - cutadapt=4.1                      # wrapped by Trim Galore; trimming environment on the server
@@ -25,8 +25,8 @@ dependencies:
   - multiqc=1.17                      # server environment
   - pigz
 
-  # R analysis (AmpliconAwareMapping.R, TargetedBisulphite_analysis.R, Intra_amplicon_diff_functions.R,
-  # cpg_density.R, plot_cpg_density.R)
+  # R analysis (AmpliconAwareMapping.R, TargetedBisulphite_analysis.R, TargetedBisulphite_sensitivity.R,
+  # Intra_amplicon_diff_functions.R, Plots_AIC_function.R, Simulation_intra_amplicon_tests.R)
   - r-base=4.2.3
   - r-data.table=1.14.8
   - r-ggplot2=3.4.4
@@ -38,7 +38,7 @@ dependencies:
   - r-survival=3.5_7
   - r-survminer=0.4.9
   - r-yaml=2.3.7                      # reading the local path configuration
-  - r-patchwork                       # CHECK: rebuttal CpG density figure only; not in the server environment
+  - r-patchwork=1.2.0                 # Simulation_intra_amplicon_tests.R (Supplementary Figure 4); server environment
   # Bioconductor 3.16, installed outside conda on the server (versions from sessionInfo)
   - bioconductor-biseq=1.38.0
   - bioconductor-biomart=2.54.1
@@ -48,6 +48,3 @@ dependencies:
   - bioconductor-limma=3.54.2
   - bioconductor-rsamtools=2.14.0
   - bioconductor-rtracklayer=1.58.0
-
-# Version still to check on the analysis server:
-#   Rscript -e 'packageVersion("patchwork")'                       (where the rebuttal figure was made)
