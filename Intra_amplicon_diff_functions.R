@@ -85,7 +85,7 @@ bootstrap_AIC_prognostic <- function(l){
 
 
 perform_AIC_analysis <- function(primer_annot,Mval,sample_annot,gene,seed_perm=42){
-  # Reproducible permutations: mclapply children only follow set.seed() with the L'Ecuyer-CMRG generator (ToDo E18)
+  # Reproducible permutations: mclapply children only follow set.seed() with the L'Ecuyer-CMRG generator
   rng_kind_ori <- RNGkind()[1]
   RNGkind("L'Ecuyer-CMRG")
   set.seed(seed_perm)
@@ -124,7 +124,7 @@ perform_AIC_analysis <- function(primer_annot,Mval,sample_annot,gene,seed_perm=4
     if(gene=="NDRG4"){
       dat_amplicon$Tissue <- as.factor(dat_amplicon$Tissue)
     }
-    # Non-nested Cox models: methylation only (A14 final 2026-11-13); Gender/Age kept for the complete-case samples
+    # Non-nested Cox models: methylation only; Gender/Age kept for the complete-case samples
     if (gene!="NDRG4"){
       dat_amplicon$Gender <- as.factor(dat_amplicon$Gender)
       dat_amplicon$Age <- as.numeric(dat_amplicon$Age)
@@ -177,7 +177,7 @@ perform_AIC_analysis <- function(primer_annot,Mval,sample_annot,gene,seed_perm=4
         pval[counter,1:2] <- cn_names[c(i,j)]
         dat_test_i <<- dat_amplicon[,c(cn_oi,paste0(rep("CpG_",2),cn_names[c(i,j)]))]
         dat_test_i <- dat_amplicon[,c(cn_oi,paste0(rep("CpG_",2),cn_names[c(i,j)]))]
-        # Both CpG models on the same samples: drop samples missing either CpG (ToDo A19)
+        # Both CpG models on the same samples: drop samples missing either CpG
         mask_complete_ij <- complete.cases(dat_test_i)
         dat_test_i <- dat_test_i[mask_complete_ij,]
         dat_test_i <<- dat_test_i
@@ -279,7 +279,7 @@ intra_amplicon_plot <- function(name,AIC_amplicon,pval_sign,gene,k,dir="AIC_plot
   dev.off()
 }
 
-# star_cutoffs: one star per cut-off below the p-value (default = the stars of the original Figure 4);
+# star_cutoffs: one star per cut-off below the p-value (default = the stars of the original submission);
 # dir: output directory of the amplicon plots (with trailing "/")
 reduced_AIC_analysis <- function(gene,pval_list,pval_cutoff,dat_AIC,star_cutoffs=c(0.1,0.01,0.001,0.001),dir="AIC_plots_red/"){
   pval_list_red <- pval_list

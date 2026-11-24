@@ -7,7 +7,7 @@
 ###############################################
 ###############################################
 
-# Sensitivity analyses and comparisons of the revision (Supplementary Figure 4, rebuttal).
+# Sensitivity analyses and comparisons of the revision (Supplementary Figure 4 and the response to the reviewers).
 # Runs on the objects saved at the end of TargetedBisulphite_analysis.R (output_for_sensitivity_analysis/): run that
 # script first.
 
@@ -40,7 +40,7 @@ rerun_permutations <- toupper(Sys.getenv("RERUN_PERMUTATIONS", "TRUE")) != "FALS
 infile_perm_previous <- "pval_total_list.txt"
 infile_swap_LY75_run_previous <- "intra_amplicon_swap_test_LY75_run.txt"
 
-# Position-matched CpGs (written by the main analysis) and outputs of the primer-CpG checks (R3.M1)
+# Position-matched CpGs (written by the main analysis) and outputs of the primer-CpG checks
 infile_matched <- file.path(project_dir, "res_dupl_CpG_position_matched.txt")
 outfile_expected <- file.path(project_dir, "res_dupl_CpG_expected_vs_observed_deviation.txt")
 outfile_dat_deviation <- file.path(project_dir, "dat_correl_deviation.txt")
@@ -59,7 +59,7 @@ setwd(project_dir)
 objects_loaded <- load(infile_sensitivity)
 print(sprintf("Loaded %d objects of the main analysis: %s", length(objects_loaded), infile_sensitivity))
 
-# Primer CpGs: excluded from the per-amplicon averages (as avAIC_table / Figure 4 of the main analysis)
+# Primer CpGs: excluded from the per-amplicon averages (as avAIC_table / Figure 3 of the main analysis)
 CpGs_in_primer <- dat_correl$ID[(dat_correl$dist_CpG==0) & !is.na(dat_correl$dist_CpG)]
 print(length(CpGs_in_primer))
 # expect: 46
@@ -90,7 +90,7 @@ library(data.table)
 # Sensitivity NDRG4: without sample 178N #
 ##########################################
 
-## Sensitivity: NDRG4 without 178N (unmatched; patient fixed effect -> expected no influence; R5, ToDo A4/E5)
+## Sensitivity: NDRG4 without 178N (unmatched; patient fixed effect -> expected no influence)
 #####################
 
 sample_swap <- "178N"
@@ -111,11 +111,11 @@ print(sprintf("Max |Delta AIC difference| with vs without %s: %.4f", sample_swap
 # expect: ~0 (only numerical differences at the floor)
 
 
-############################################################
-# Sensitivity LY75: sequencing run as confounder (R3.M6a) #
-############################################################
+##################################################
+# Sensitivity LY75: sequencing run as confounder #
+##################################################
 # Run 239 = additional melanoma samples; all CRC/ccRCC samples are in run 231, so only LY75 is affected.
-# Non-nested as the main analysis (ToDo RV7, 2026-11-16): Meth + Run vs Gender + Age + Run, i.e. methylation replaces
+# Non-nested as the main analysis: Meth + Run vs Gender + Age + Run, i.e. methylation replaces
 # age + sex and Run is in both models; both on the same samples. Main results above unchanged.
 levels_run <- levels(melanoma_annot_sort_BS$Run)
 print(sprintf("Run levels: %s (reference: %s)", paste(levels_run, collapse = ", "), levels_run[1]))
@@ -164,7 +164,7 @@ print(sprintf("LY75 min Delta AIC: %.2f without Run, %.2f with Run",
               min(dat_LY75_run$delta_AIC, na.rm = T), min(dat_LY75_run$delta_AIC_run, na.rm = T)))
 print(cor.test(dat_LY75_run$delta_AIC, dat_LY75_run$delta_AIC_run, method = "spearman", exact = F))
 
-# Per amplicon (as Figure 4: mean and minimum over the target-sequence CpGs of the amplicon)
+# Per amplicon (as Figure 3: mean and minimum over the target-sequence CpGs of the amplicon)
 mask_target_run <- !(dat_LY75_run$ID %in% CpGs_in_primer)
 avAIC_LY75_run <- data.frame(Amplicon = unique(dat_LY75_run$Amplicon), stringsAsFactors = F)
 avAIC_LY75_run$avAIC <- sapply(avAIC_LY75_run$Amplicon, function(x){mean(dat_LY75_run$delta_AIC[dat_LY75_run$Amplicon==x & mask_target_run])})
@@ -174,7 +174,7 @@ avAIC_LY75_run$minAIC_run <- sapply(avAIC_LY75_run$Amplicon, function(x){min(dat
 print(avAIC_LY75_run)
 write.table(avAIC_LY75_run,"LY75_avAIC_run.txt",col.names = T,row.names = F,quote = F, sep="\t")
 
-# MSP with Run (separation, ToDo A18: Delta AIC stays a bound), non-nested as above, on the same samples
+# MSP with Run (separation: Delta AIC stays a bound), non-nested as above, on the same samples
 mask_complete_MSP_run <- complete.cases(melanoma_annot_sort_BS[,c("Meth","Followup_time","MK_death","Gender","Age","Run")])
 cox_MSP_run <- coxph(formula("Surv(Followup_time, MK_death) ~ Meth+Run"), data = melanoma_annot_sort_BS[mask_complete_MSP_run,])
 cox_CF_run <- coxph(formula_CF_run, data = melanoma_annot_sort_BS[mask_complete_MSP_run,])
@@ -182,9 +182,9 @@ print(summary(cox_MSP_run))
 print(sprintf("Delta AIC for MSP amplicon with Run (non-nested): %s (n = %d)", AIC(cox_MSP_run) - AIC(cox_CF_run), sum(mask_complete_MSP_run)))
 
 
-###########################################################################
-# Sensitivity LY75 + GREM1: unadjusted and clinical covariates (R3.M2)   #
-###########################################################################
+################################################################
+# Sensitivity LY75 + GREM1: unadjusted and clinical covariates #
+################################################################
 # Main models (TargetedBisulphite_analysis.R): Meth vs Gender + Age (non-nested). Here, on the same samples per comparison:
 #   unadjusted: Meth vs empty model; clinical: Meth + Gender + Age + clinical covariates vs Gender + Age + clinical covariates.
 # With 11 (melanoma) / 15 (ccRCC) events these models are small-sample sensitivity analyses only.
@@ -238,7 +238,7 @@ sensitivity_cox <- function(dat, n_cpg, dat_perCpG, event, covariates, gene){
   print(sprintf("%s CpGs correlated with age (p < 0.05): %d, median rho %.2f; differing by sex (p < 0.05): %d", gene,
                 sum(dat_sens$pval_age < 0.05), median(dat_sens$rho_age), sum(dat_sens$pval_sex < 0.05)))
 
-  # Per amplicon (as Figure 4: mean and minimum over the target-sequence CpGs of the amplicon)
+  # Per amplicon (as Figure 3: mean and minimum over the target-sequence CpGs of the amplicon)
   mask_target_sens <- !(dat_sens$ID %in% CpGs_in_primer)
   avAIC_sens <- data.frame(Amplicon = unique(dat_sens$Amplicon), stringsAsFactors = F)
   avAIC_sens$avAIC <- sapply(avAIC_sens$Amplicon, function(x){mean(dat_sens$delta_AIC[dat_sens$Amplicon==x & mask_target_sens])})
@@ -311,7 +311,7 @@ nonnested_cox <- function(dat, n_cpg, dat_sens, event, bases, gene){
   }
   write.table(dat_nn, paste0(gene, "_AIC_table_nonnested.txt"), col.names = T, row.names = F, quote = F, sep = "\t")
 
-  # Per amplicon (as Figure 4: mean and minimum over the target-sequence CpGs of the amplicon)
+  # Per amplicon (as Figure 3: mean and minimum over the target-sequence CpGs of the amplicon)
   mask_target_nn <- !(dat_nn$ID %in% CpGs_in_primer)
   avAIC_nn <- data.frame(Amplicon = unique(dat_nn$Amplicon), stringsAsFactors = F)
   for (cn_j in grep("^delta_AIC", colnames(dat_nn), value = T)){
@@ -328,16 +328,16 @@ dat_LY75_nn <- nonnested_cox(melanoma_annot_sort_BS, nrow(Mval_LY75_sort), dat_L
 dat_GREM1_nn <- nonnested_cox(ccRCC_annot_sort_BS, nrow(Mval_GREM1_sort), dat_GREM1_sens, "NK_death",
                               list(agesex = c("Gender","Age"), clin = c("Gender","Age","Stage","Size")), "GREM1")
 
-# Check (v12): the main analysis is now the non-nested comparison with age + sex
+# Check: the main analysis is the non-nested comparison with age + sex
 print(sprintf("Max |main - non-nested age + sex|: LY75 %.4f, GREM1 %.4f",
               max(abs(dat_LY75_nn$delta_AIC - dat_LY75_nn$delta_AIC_nn_agesex)),
               max(abs(dat_GREM1_nn$delta_AIC - dat_GREM1_nn$delta_AIC_nn_agesex))))
 # expect: 0
 
 
-#####################################################################
-# Sensitivity LY75 + GREM1: read-based models, non-nested (ToDo A14) #
-#####################################################################
+###########################################################
+# Sensitivity LY75 + GREM1: read-based models, non-nested #
+###########################################################
 # Height + density only vs base model (age + sex, or with the clinical covariates), on the samples complete for both.
 # Was part of the read-based loops of the main script; rbAIC_nn_agesex equals rbAIC_hybr of avAIC_table_ext.txt.
 
@@ -385,11 +385,11 @@ print(sprintf("Max |rbAIC_nn_agesex - rbAIC_hybr|: %.4f",
 # expect: 0
 write.table(avAIC_rb_nn,"avAIC_rb_nonnested.txt",col.names = T,row.names = F,quote = F, sep="\t")
 
-###############################################################
-# Sensitivity primer CpGs: rank-based tests, NDRG4 floor (R9) #
-###############################################################
+##########################################################
+# Sensitivity primer CpGs: rank-based tests, NDRG4 floor #
+##########################################################
 
-## Sensitivity: rank-based tests and without NDRG4 CpGs at the Delta AIC floor (R9, ToDo A1)
+## Sensitivity: rank-based tests and without NDRG4 CpGs at the Delta AIC floor
 #####################
 
 mask_floor_correl <- dat_correl$ID %in% dat_NDRG4_ROC_logit_perCpG$ID[dat_NDRG4_ROC_logit_perCpG$at_floor]
@@ -412,9 +412,9 @@ print(cor.test(dat_correl_filt$dist_CpG, dat_correl_filt$deltaAIC, method = "spe
 print(cor.test(dat_correl_nofloor_filt$diff_meth, dat_correl_nofloor_filt$deltaAIC))
 print(cor.test(dat_correl_nofloor_filt$dist_CpG, dat_correl_nofloor_filt$deltaAIC))
 
-#################################################################################
-# Primer CpGs: distance < 50 bp, deviation-only model and coverage (R3.M1, A25) #
-#################################################################################
+####################################################################
+# Primer CpGs: distance < 50 bp, deviation-only model and coverage #
+####################################################################
 # Order of the argument: (1) distance to the nearest primer CpG within 50 bp (most target CpGs; beyond 50 bp the
 # distance is bounded by the amplicon length); (2) deviation of the incorporated primer variant from the equimolar 50%
 # (preferential amplification) as explanation of the Delta AIC differences of the position-matched CpGs;
@@ -485,7 +485,7 @@ print(confint(model_cov))
 print(summary(model_dev_cov))
 print(confint(model_dev_cov))
 print(AIC(model_dev, model_cov, model_dev_cov))
-# expect (standalone check of 2026-11-24 on the same data): dev -0.239 (CI -0.302 to -0.175); cov +1.26 (CI -0.90 to
+# expect (earlier run on the same data): dev -0.239 (CI -0.302 to -0.175); cov +1.26 (CI -0.90 to
 #         3.42); AIC 1307.9 / 1355.8 / 1307.6
 
 ### Check: only CpGs in amplicons with at least one primer with CpG (no deviation set to 0)
@@ -497,6 +497,15 @@ model_dev_cov_primer <- lm(deltaAIC ~ dev_primer_pct + log10_cov + gene, data = 
 print(summary(model_dev_cov_primer))
 print(confint(model_dev_cov_primer))
 # expect: dev -0.080 (CI -0.134 to -0.026)
+
+### Deviation adjusted for local CpG density (same CpG = same density, so density cancels within a position-matched pair)
+model_dev_dens <- lm(deltaAIC ~ dev_primer_pct + cpg_per_100bp + gene, data = dat_target_dev)
+model_dev_dens_primer <- lm(deltaAIC ~ dev_primer_pct + cpg_per_100bp + gene, data = dat_target_dev_primer)
+print(summary(model_dev_dens))
+print(confint(model_dev_dens))
+print(summary(model_dev_dens_primer))
+print(confint(model_dev_dens_primer))
+# expect: 210 CpGs dev -0.180 (CI -0.245 to -0.114); 153 CpGs dev -0.076 (CI -0.131 to -0.021), density p = 0.55
 
 ## Expected vs observed Delta AIC difference of the position-matched CpGs
 #####################
@@ -515,14 +524,18 @@ res_expected <- data.frame(CpG = res_matched_dev$CpG, Amplicon1 = res_matched_de
                            observed_diff = dat_1$deltaAIC - dat_2$deltaAIC,
                            expected_diff_dev = predict(model_dev, dat_1) - predict(model_dev, dat_2),
                            expected_diff_cov = predict(model_cov, dat_1) - predict(model_cov, dat_2),
-                           expected_diff_dev_cov = predict(model_dev_cov, dat_1) - predict(model_dev_cov, dat_2))
+                           expected_diff_dev_cov = predict(model_dev_cov, dat_1) - predict(model_dev_cov, dat_2),
+                           expected_diff_dev_dens = predict(model_dev_dens, dat_1) - predict(model_dev_dens, dat_2),
+                           expected_diff_dev_dens_primer = predict(model_dev_dens_primer, dat_1) - predict(model_dev_dens_primer, dat_2))
 print(res_expected)
 
 ### Per pair: mean observed and expected difference
-print(aggregate(cbind(observed_diff, expected_diff_dev, expected_diff_cov, expected_diff_dev_cov) ~ Amplicon1 + Amplicon2,
+print(aggregate(cbind(observed_diff, expected_diff_dev, expected_diff_cov, expected_diff_dev_cov, expected_diff_dev_dens,
+                      expected_diff_dev_dens_primer) ~ Amplicon1 + Amplicon2,
                 data = res_expected, FUN = mean))
 # expect: GREM1_31 - GREM1_Original observed -5.3, expected dev -6.1, cov +0.3; LY75_10_S - LY75_9_S +3.2 / +2.4 / -1.3;
-#         LY75_9_S - LY75_5_S -0.5 / -2.7 / +2.1
+#         LY75_9_S - LY75_5_S -0.5 / -2.7 / +2.1; deviation + density (210 / 153 CpGs): GREM1 -4.6 / -2.0,
+#         LY75_10_S - LY75_9_S +1.8 / +0.8, LY75_9_S - LY75_5_S -2.0 / -0.8
 
 ## Number of primers with CpGs, deviation and local CpG density
 #####################
@@ -550,11 +563,11 @@ write.table(dat_target_dev, file = outfile_dat_deviation, col.names = T, row.nam
 
 
 
-##################################################################
-# Intra-amplicon differences: original permutation test (E18)    #
-##################################################################
+#########################################################
+# Intra-amplicon differences: original permutation test #
+#########################################################
 # Test of the original submission (values of each CpG permuted between samples; null: neither CpG is informative), kept
-# for comparison with the permutation test (within samples) of the main analysis (rebuttal, Supplementary Figure 4). Plots in AIC_plots/ and AIC_plots_red/.
+# for comparison with the permutation test (within samples) of the main analysis (Supplementary Figure 4). Plots in AIC_plots/ and AIC_plots_red/.
 
 source(file.path(project_dir,"Intra_amplicon_diff_functions.R"))
 
@@ -680,10 +693,10 @@ for (gene in unique(summary_swap_perm$Gene)){
 # Sensitivity LY75: intra-amplicon permutation test with sequencing run #
 ########################################################################
 
-## LY75: permutation test (within samples) with sequencing run in both CpG models (R3.M6a, Louis 2026-11-17)
+## LY75: permutation test (within samples) with sequencing run in both CpG models
 #####################
 # Surv ~ CpG_a + Run vs Surv ~ CpG_b + Run, same target-CpG pairs, permutations, seed and cut-off as the main test.
-# Decision rule (Louis): if the LY75 intra-amplicon results do not change, the main analysis stays without run.
+# Decision rule: if the LY75 intra-amplicon results do not change, the main analysis stays without run.
 pairs_LY75 <- res_swap[res_swap$Gene == "LY75",]
 if (rerun_permutations){
   RNGkind("L'Ecuyer-CMRG")
@@ -737,12 +750,12 @@ print(sprintf("LY75 min BH within amplicon: main %.3f, with Run %.3f; pairs BH <
 print(cor.test(res_swap_LY75_run$pval_swap, res_swap_LY75_run$pval_swap_run, method = "spearman", exact = F))
 print(sprintf("LY75 samples per pair with Run: %d-%d",
               min(res_swap_LY75_run$n_samples), max(res_swap_LY75_run$n_samples)))
-# expect: main 6 pairs at 0.05 / 21 at 0.10 (v18), no BH < 0.05
+# expect: main 6 pairs at 0.05 / 21 at 0.10, no BH < 0.05
 
 
-##############################################
-# Simulation of the intra-amplicon tests (E18) #
-##############################################
+##########################################
+# Simulation of the intra-amplicon tests #
+##########################################
 # Supplementary Figure 4: original permutation test (between samples) vs revised permutation test (within samples). Run last: the script sets its own seed
 # and RNG kind. Output in simulation_intra_amplicon/ (~10-20 min on 40 cores).
 if (rerun_permutations){

@@ -142,7 +142,7 @@ plotPlots_AIC <- function(dat_gene,locs_gene,gene,MSP_amplicon,primer_annot_gene
   for (i in 1:n_transcript_ids){
     dat_transcript <- gene_obj[gene_obj$ensembl_transcript_id==transcript_ids[i],]
     dat_transcript <- dat_transcript[sort(as.numeric(dat_transcript$exon_chrom_start),index.return=T)$ix,]
-    # Transcript name as label (R1), transcript ID if no name is available
+    # Transcript name as label, transcript ID if no name is available
     label_transcript <- dat_transcript$ensembl_transcript_id[1]
     if ("external_transcript_name" %in% colnames(dat_transcript)){
       if (!is.na(dat_transcript$external_transcript_name[1]) & dat_transcript$external_transcript_name[1] != ""){

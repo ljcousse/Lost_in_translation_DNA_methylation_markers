@@ -5,7 +5,7 @@
 ##                                             ##
 #################################################
 #################################################
-# Supplementary Figure (ToDo E18, R-E18 in the rebuttal): behaviour of the two tests for a difference in clinical value
+# Supplementary Figure 4: behaviour of the two tests for a difference in clinical value
 # between two CpGs of the same amplicon, in the prognostic setting (Cox regression, n = 26 as in the ccRCC and melanoma
 # cohorts).
 #  - Permutation between samples (original submission): the observed Delta AIC = AIC(CpG 2) - AIC(CpG 1) is compared with the Delta
@@ -187,7 +187,7 @@ p3 <- ggplot(results[mask_diff,], aes(x = r2, y = rate_sign, colour = test)) +
   theme_bw() +
   theme(legend.position = "none")
 
-cairo_pdf(outfile_figure, width = 8, height = 11) # cairo: Delta glyph (ToDo E20)
+cairo_pdf(outfile_figure, width = 8, height = 11) # cairo: Delta glyph
 print(p1 + p2 + p3 + plot_layout(ncol = 1))
 dev.off()
 print(sprintf("Done: %s", format(Sys.time())))
