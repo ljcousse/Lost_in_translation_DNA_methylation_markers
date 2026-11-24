@@ -1658,11 +1658,16 @@ dev.off()
 cor.test(dat_correl_filt[!(dat_correl_filt$dist==0),]$diff_meth,
          dat_correl_filt[!(dat_correl_filt$dist==0),]$deltaAIC)
                          
-# deltaAIC ifo distance to nearest primer
+# deltaAIC ifo distance to nearest primer: linear fit over the full range (blue) and for distances < 50 bp (red; most
+# target CpGs, beyond 50 bp the distance is bounded by the amplicon length; rebuttal R3.M1)
+mask_dist_50_fig <- (dat_correl_filt$dist!=0) & (dat_correl_filt$dist_CpG < 50)
+dat_correl_filt_50 <- dat_correl_filt[mask_dist_50_fig,]
+print(sprintf("Supplementary Figure 1C: %d of %d target CpGs at < 50 bp from the nearest primer CpG", nrow(dat_correl_filt_50), sum(dat_correl_filt$dist!=0)))
 jpeg(file.path(project_dir,"correl_deltaAIC_dist.jpg"))
 g <- ggplot(dat_correl_filt[!(dat_correl_filt$dist==0),], aes(x=dist_CpG, y=deltaAIC)) + 
   geom_point()+ 
   geom_smooth(method=lm)  + 
+  geom_smooth(data=dat_correl_filt_50, method=lm, colour="red", fill="red", alpha=0.2)  + 
   theme(axis.text.x= element_text(size=14),
         axis.text.y= element_text(size=14))
 print(g)

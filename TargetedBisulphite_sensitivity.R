@@ -33,6 +33,11 @@ if (!file.exists(infile_sensitivity)){
   stop("Objects of the main analysis not found: ", infile_sensitivity, ". Run TargetedBisulphite_analysis.R first.")
 }
 
+# Position-matched CpGs (written by the main analysis) and outputs of the primer-CpG checks (R3.M1)
+infile_matched <- file.path(project_dir, "res_dupl_CpG_position_matched.txt")
+outfile_expected <- file.path(project_dir, "res_dupl_CpG_expected_vs_observed_deviation.txt")
+outfile_dat_deviation <- file.path(project_dir, "dat_correl_deviation.txt")
+
 # Log file: console output (also shown on screen) + messages/warnings/errors (log only)
 log_file <- file.path(project_dir, paste0("TargetedBisulphite_sensitivity_", format(Sys.time(), "%Y%m%d_%H%M"), ".log"))
 log_con <- file(log_file, open = "wt")
@@ -399,6 +404,142 @@ print(cor.test(dat_correl_filt$diff_meth, dat_correl_filt$deltaAIC, method = "sp
 print(cor.test(dat_correl_filt$dist_CpG, dat_correl_filt$deltaAIC, method = "spearman", exact = F))
 print(cor.test(dat_correl_nofloor_filt$diff_meth, dat_correl_nofloor_filt$deltaAIC))
 print(cor.test(dat_correl_nofloor_filt$dist_CpG, dat_correl_nofloor_filt$deltaAIC))
+
+#################################################################################
+# Primer CpGs: distance < 50 bp, deviation-only model and coverage (R3.M1, A25) #
+#################################################################################
+# Order of the argument: (1) distance to the nearest primer CpG within 50 bp (most target CpGs; beyond 50 bp the
+# distance is bounded by the amplicon length); (2) deviation of the incorporated primer variant from the equimolar 50%
+# (preferential amplification) as explanation of the Delta AIC differences of the position-matched CpGs;
+# (3) amplicon coverage as alternative explanation; (4) how far the number of primers with CpGs, the deviation and the
+# local CpG density can be separated.
+# CpGs of one amplicon share the primers and the coverage, so they are not independent: standard errors and p-values
+# are too small; compare estimates and AIC.
+
+## Distance to the nearest primer CpG < 50 bp
+#####################
+# dat_correl_filt: target CpGs in amplicons with at least one primer with CpG (primer CpGs themselves excluded)
+dist_max <- 50
+mask_dist_50 <- dat_correl_filt$dist_CpG < dist_max
+dat_correl_50 <- dat_correl_filt[mask_dist_50,]
+print(sprintf("Target CpGs with the nearest primer CpG at < %d bp: %d/%d", dist_max, nrow(dat_correl_50), nrow(dat_correl_filt)))
+print(cor.test(dat_correl_50$dist_CpG, dat_correl_50$deltaAIC, method = "spearman", exact = F))
+print(cor.test(dat_correl_50$dist_CpG, dat_correl_50$deltaAIC))
+print(summary(lm(deltaAIC ~ dist_CpG + gene, data = dat_correl_50)))
+# expect (all distances, sensitivity above / manuscript): Spearman rho 0.287
+
+### Per gene
+for (gene_k in c("NDRG4","GREM1","LY75")){
+  mask_gene_k <- dat_correl_50$gene == gene_k
+  print(sprintf("%s: %d target CpGs at < %d bp", gene_k, sum(mask_gene_k), dist_max))
+  if (sum(mask_gene_k) >= 5){
+    print(cor.test(dat_correl_50$dist_CpG[mask_gene_k], dat_correl_50$deltaAIC[mask_gene_k], method = "spearman", exact = F))
+  }
+}
+
+## Deviation of the nearest primer CpG and amplicon coverage
+#####################
+res_matched_dev <- read.table(infile_matched, header = T, sep = "\t", stringsAsFactors = F)
+print(dim(res_matched_dev))
+# expect: 11 rows (3 GREM1_31/GREM1_Original, 3 LY75_10_S/LY75_9_S, 5 LY75_9_S/LY75_5_S)
+
+dat_correl$Amplicon <- gsub("^[0-9]+_[0-9]+_","",dat_correl$ID)
+dat_correl$n_primers_CpG <- as.numeric(as.character(dat_correl$CG_qual))
+
+# Deviation of the nearest primer CpG from 50% methylation (in %); 0 when the amplicon has no primer with CpG
+dat_correl$dev_primer_pct <- abs(dat_correl$av_meth_primer_CpG-0.5)*100
+mask_no_primer_CpG <- dat_correl$n_primers_CpG == 0
+dat_correl$dev_primer_pct[mask_no_primer_CpG] <- 0
+
+# Average coverage of the amplicon (log10)
+cov_amplicon <- setNames(avAIC_table_ext$Am_cov, avAIC_table_ext$AmpliconID)
+dat_correl$log10_cov <- log10(as.numeric(cov_amplicon[dat_correl$Amplicon]))
+
+# Target CpGs only (not in a primer)
+mask_target_dev <- (dat_correl$dist_CpG != 0) | is.na(dat_correl$dist_CpG)
+dat_target_dev <- dat_correl[mask_target_dev,]
+print(dim(dat_target_dev))
+# expect: 210 rows (as dat_correl_not_in_primer)
+print(sum(is.na(dat_target_dev$dev_primer_pct)))
+print(sum(is.na(dat_target_dev$log10_cov)))
+# expect: 0 and 0
+
+print(cor.test(dat_target_dev$dev_primer_pct, dat_target_dev$log10_cov, method = "spearman", exact = F))
+# expect: rho -0.04
+
+### Models (gene as covariate: different endpoints and scales)
+model_dev <- lm(deltaAIC ~ dev_primer_pct + gene, data = dat_target_dev)
+model_cov <- lm(deltaAIC ~ log10_cov + gene, data = dat_target_dev)
+model_dev_cov <- lm(deltaAIC ~ dev_primer_pct + log10_cov + gene, data = dat_target_dev)
+print(summary(model_dev))
+print(confint(model_dev))
+print(summary(model_cov))
+print(confint(model_cov))
+print(summary(model_dev_cov))
+print(confint(model_dev_cov))
+print(AIC(model_dev, model_cov, model_dev_cov))
+# expect (standalone check of 2026-11-24 on the same data): dev -0.239 (CI -0.302 to -0.175); cov +1.26 (CI -0.90 to
+#         3.42); AIC 1307.9 / 1355.8 / 1307.6
+
+### Check: only CpGs in amplicons with at least one primer with CpG (no deviation set to 0)
+mask_primer_CpG_dev <- dat_target_dev$n_primers_CpG > 0
+dat_target_dev_primer <- dat_target_dev[mask_primer_CpG_dev,]
+print(dim(dat_target_dev_primer))
+# expect: 153 rows (as dat_correl_filt)
+model_dev_cov_primer <- lm(deltaAIC ~ dev_primer_pct + log10_cov + gene, data = dat_target_dev_primer)
+print(summary(model_dev_cov_primer))
+print(confint(model_dev_cov_primer))
+# expect: dev -0.080 (CI -0.134 to -0.026)
+
+## Expected vs observed Delta AIC difference of the position-matched CpGs
+#####################
+# Same CpG in both amplicons: the gene term cancels, the difference comes from deviation and/or coverage
+ID_1 <- paste(res_matched_dev$CpG, res_matched_dev$Amplicon1, sep = "_")
+ID_2 <- paste(res_matched_dev$CpG, res_matched_dev$Amplicon2, sep = "_")
+dat_1 <- dat_correl[ID_1,]
+dat_2 <- dat_correl[ID_2,]
+if (sum(dat_1$ID==ID_1) != length(ID_1) | sum(dat_2$ID==ID_2) != length(ID_2)){
+  stop("Position-matched CpGs not found in dat_correl")
+}
+
+res_expected <- data.frame(CpG = res_matched_dev$CpG, Amplicon1 = res_matched_dev$Amplicon1, Amplicon2 = res_matched_dev$Amplicon2,
+                           dev_1 = round(dat_1$dev_primer_pct, 1), dev_2 = round(dat_2$dev_primer_pct, 1),
+                           log10_cov_1 = round(dat_1$log10_cov, 2), log10_cov_2 = round(dat_2$log10_cov, 2),
+                           observed_diff = dat_1$deltaAIC - dat_2$deltaAIC,
+                           expected_diff_dev = predict(model_dev, dat_1) - predict(model_dev, dat_2),
+                           expected_diff_cov = predict(model_cov, dat_1) - predict(model_cov, dat_2),
+                           expected_diff_dev_cov = predict(model_dev_cov, dat_1) - predict(model_dev_cov, dat_2))
+print(res_expected)
+
+### Per pair: mean observed and expected difference
+print(aggregate(cbind(observed_diff, expected_diff_dev, expected_diff_cov, expected_diff_dev_cov) ~ Amplicon1 + Amplicon2,
+                data = res_expected, FUN = mean))
+# expect: GREM1_31 - GREM1_Original observed -5.3, expected dev -6.1, cov +0.3; LY75_10_S - LY75_9_S +3.2 / +2.4 / -1.3;
+#         LY75_9_S - LY75_5_S -0.5 / -2.7 / +2.1
+
+## Number of primers with CpGs, deviation and local CpG density
+#####################
+# Correlated by design (more primers with CpG in CpG-richer regions, and a deviation only with a primer CpG), so their
+# effects cannot be fully separated: how much of the number-of-primers effect remains with the deviation or the density?
+print(cor.test(dat_target_dev$n_primers_CpG, dat_target_dev$dev_primer_pct, method = "spearman", exact = F))
+print(cor.test(dat_target_dev$n_primers_CpG, dat_target_dev$cpg_per_100bp, method = "spearman", exact = F))
+print(cor.test(dat_target_dev$dev_primer_pct, dat_target_dev$cpg_per_100bp, method = "spearman", exact = F))
+
+model_n <- lm(deltaAIC ~ CG_qual + gene, data = dat_target_dev)
+model_n_dev <- lm(deltaAIC ~ CG_qual + dev_primer_pct + gene, data = dat_target_dev)
+model_n_dens <- lm(deltaAIC ~ CG_qual + cpg_per_100bp + gene, data = dat_target_dev)
+model_n_dev_dens <- lm(deltaAIC ~ CG_qual + dev_primer_pct + cpg_per_100bp + gene, data = dat_target_dev)
+for (model_name in c("model_n", "model_n_dev", "model_n_dens", "model_n_dev_dens")){
+  print(model_name)
+  print(summary(get(model_name))$coefficients)
+}
+print(AIC(model_n, model_n_dev, model_n_dens, model_n_dev_dens))
+# expect: model_n CG_qual1 -6.5, CG_qual2 -10.4; model_n_dens -5.1 / -8.7 (main analysis, CpG density covariate)
+
+## Save
+#####################
+write.table(res_expected, file = outfile_expected, col.names = T, row.names = F, quote = F, sep = "\t")
+write.table(dat_target_dev, file = outfile_dat_deviation, col.names = T, row.names = F, quote = F, sep = "\t")
 
 
 
