@@ -891,36 +891,59 @@ write.table(rbind(primer_annot_list[["GREM1"]],primer_annot_list[["NDRG4"]],prim
 # Average delta AIC table #
 ###########################
 
+# Mean and minimum Delta AIC per amplicon over the target-sequence CpGs only: values at primer CpGs reflect the
+# incorporated primer variant, not the template (same primer regions as dist_CpG == 0 in Data correl below).
+# Am_CpG = all CpGs of the amplicon, Am_CpG_target = target-sequence CpGs; Am_cov = average coverage over all CpGs.
+get_mask_target <- function(pos, gene, amplicon){
+  primer_annot_k <- primer_annot_list[[gene]][primer_annot_list[[gene]]$name==amplicon,]
+  pos <- as.numeric(pos)
+  mask_fwd <- (pos>=primer_annot_k$begin) & (pos<=(primer_annot_k$begin+primer_annot_k$len_fwd-1))
+  mask_rev <- (pos>=(primer_annot_k$end-primer_annot_k$len_rev+1)) & (pos<=primer_annot_k$end)
+  return(!(mask_fwd | mask_rev))
+}
+
 avAIC_table <- NULL
 for (k in 1:nrow(primer_annot_GREM1)){
   mask_amplicon <- grepl(paste0(primer_annot_GREM1$name[k],"$"),rownames(Mval_GREM1_sort))
+  mask_target <- mask_amplicon & get_mask_target(dat_GREM1_ROC_logit_perCpG$Pos,"GREM1",primer_annot_GREM1$name[k])
   avAIC_table <- rbind(avAIC_table,
                        c(primer_annot_GREM1$name[k],sum(mask_amplicon),
-                         mean(dat_GREM1_ROC_logit_perCpG$delta_AIC[mask_amplicon]),
-                         min(dat_GREM1_ROC_logit_perCpG$delta_AIC[mask_amplicon]),
-                         mean(totalReads(bs_GREM1)[grepl(primer_annot_GREM1$name[k],locs_GREM1$name),col_mask_ccRCC],na.rm=T)))
+                         mean(dat_GREM1_ROC_logit_perCpG$delta_AIC[mask_target]),
+                         min(dat_GREM1_ROC_logit_perCpG$delta_AIC[mask_target]),
+                         mean(totalReads(bs_GREM1)[grepl(primer_annot_GREM1$name[k],locs_GREM1$name),col_mask_ccRCC],na.rm=T),
+                         sum(mask_target)))
 }
 for (k in 1:nrow(primer_annot_LY75)){
   mask_amplicon <- grepl(paste0(primer_annot_LY75$name[k],"$"),rownames(Mval_LY75_sort))
+  mask_target <- mask_amplicon & get_mask_target(dat_LY75_ROC_logit_perCpG$Pos,"LY75",primer_annot_LY75$name[k])
   avAIC_table <- rbind(avAIC_table,
                        c(primer_annot_LY75$name[k],sum(mask_amplicon),
-                         mean(dat_LY75_ROC_logit_perCpG$delta_AIC[mask_amplicon]),
-                         min(dat_LY75_ROC_logit_perCpG$delta_AIC[mask_amplicon]),
-                         mean(totalReads(bs_LY75)[grepl(primer_annot_LY75$name[k],locs_LY75$name),col_mask_melanoma],na.rm=T)))
+                         mean(dat_LY75_ROC_logit_perCpG$delta_AIC[mask_target]),
+                         min(dat_LY75_ROC_logit_perCpG$delta_AIC[mask_target]),
+                         mean(totalReads(bs_LY75)[grepl(primer_annot_LY75$name[k],locs_LY75$name),col_mask_melanoma],na.rm=T),
+                         sum(mask_target)))
 }
 for (k in 1:nrow(primer_annot_NDRG4)){
   mask_amplicon <- grepl(paste0(primer_annot_NDRG4$name[k],"$"),rownames(Mval_NDRG4_sort))
+  mask_target <- mask_amplicon & get_mask_target(dat_NDRG4_ROC_logit_perCpG$Pos,"NDRG4",primer_annot_NDRG4$name[k])
   avAIC_table <- rbind(avAIC_table,
                        c(primer_annot_NDRG4$name[k],sum(mask_amplicon),
-                         mean(dat_NDRG4_ROC_logit_perCpG$delta_AIC[mask_amplicon]),
-                         min(dat_NDRG4_ROC_logit_perCpG$delta_AIC[mask_amplicon]),
-                         mean(totalReads(bs_NDRG4)[grepl(primer_annot_NDRG4$name[k],locs_NDRG4$name),col_mask_CRC],na.rm=T)))
+                         mean(dat_NDRG4_ROC_logit_perCpG$delta_AIC[mask_target]),
+                         min(dat_NDRG4_ROC_logit_perCpG$delta_AIC[mask_target]),
+                         mean(totalReads(bs_NDRG4)[grepl(primer_annot_NDRG4$name[k],locs_NDRG4$name),col_mask_CRC],na.rm=T),
+                         sum(mask_target)))
 }
-colnames(avAIC_table) <- c("AmpliconID","Am_CpG","avAIC","minAIC","Am_cov")
+colnames(avAIC_table) <- c("AmpliconID","Am_CpG","avAIC","minAIC","Am_cov","Am_CpG_target")
 avAIC_table <- data.frame(avAIC_table)
-for (i in 2:4){
+for (i in c(2:4,6)){
   avAIC_table[,i] <- as.numeric(avAIC_table[,i])
 }
+print(sprintf("Primer CpGs excluded from the amplicon averages: %d (of %d CpGs)",
+              sum(avAIC_table$Am_CpG - avAIC_table$Am_CpG_target), sum(avAIC_table$Am_CpG)))
+# expect: 46 (NDRG4 19, GREM1 22, LY75 5)
+print(avAIC_table[avAIC_table$AmpliconID %in% c("NDRG4_Original","GREM1_15","GREM1_28","LY75_9_S"),c("AmpliconID","avAIC","minAIC")])
+# expect (target CpGs only, recomputed from the run of 2026-11-18): NDRG4_Original -24.0/-26.5, GREM1_15 -15.9/-18.5,
+#        GREM1_28 -7.7/-11.7, LY75_9_S -2.8/-5.2
 
 for (i in 1:nrow(avAIC_table)){
   gene_i <- gsub('_.*$','',avAIC_table$AmpliconID[i])

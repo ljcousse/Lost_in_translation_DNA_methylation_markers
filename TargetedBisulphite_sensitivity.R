@@ -47,6 +47,11 @@ setwd(project_dir)
 objects_loaded <- load(infile_sensitivity)
 print(sprintf("Loaded %d objects of the main analysis: %s", length(objects_loaded), infile_sensitivity))
 
+# Primer CpGs: excluded from the per-amplicon averages (as avAIC_table / Figure 4 of the main analysis)
+CpGs_in_primer <- dat_correl$ID[(dat_correl$dist_CpG==0) & !is.na(dat_correl$dist_CpG)]
+print(length(CpGs_in_primer))
+# expect: 46
+
 #############################
 # Loading required packages #
 #############################
@@ -147,12 +152,13 @@ print(sprintf("LY75 min Delta AIC: %.2f without Run, %.2f with Run",
               min(dat_LY75_run$delta_AIC, na.rm = T), min(dat_LY75_run$delta_AIC_run, na.rm = T)))
 print(cor.test(dat_LY75_run$delta_AIC, dat_LY75_run$delta_AIC_run, method = "spearman", exact = F))
 
-# Per amplicon (as Figure 4: mean and minimum over all CpGs of the amplicon)
+# Per amplicon (as Figure 4: mean and minimum over the target-sequence CpGs of the amplicon)
+mask_target_run <- !(dat_LY75_run$ID %in% CpGs_in_primer)
 avAIC_LY75_run <- data.frame(Amplicon = unique(dat_LY75_run$Amplicon), stringsAsFactors = F)
-avAIC_LY75_run$avAIC <- sapply(avAIC_LY75_run$Amplicon, function(x){mean(dat_LY75_run$delta_AIC[dat_LY75_run$Amplicon==x])})
-avAIC_LY75_run$avAIC_run <- sapply(avAIC_LY75_run$Amplicon, function(x){mean(dat_LY75_run$delta_AIC_run[dat_LY75_run$Amplicon==x])})
-avAIC_LY75_run$minAIC <- sapply(avAIC_LY75_run$Amplicon, function(x){min(dat_LY75_run$delta_AIC[dat_LY75_run$Amplicon==x])})
-avAIC_LY75_run$minAIC_run <- sapply(avAIC_LY75_run$Amplicon, function(x){min(dat_LY75_run$delta_AIC_run[dat_LY75_run$Amplicon==x])})
+avAIC_LY75_run$avAIC <- sapply(avAIC_LY75_run$Amplicon, function(x){mean(dat_LY75_run$delta_AIC[dat_LY75_run$Amplicon==x & mask_target_run])})
+avAIC_LY75_run$avAIC_run <- sapply(avAIC_LY75_run$Amplicon, function(x){mean(dat_LY75_run$delta_AIC_run[dat_LY75_run$Amplicon==x & mask_target_run])})
+avAIC_LY75_run$minAIC <- sapply(avAIC_LY75_run$Amplicon, function(x){min(dat_LY75_run$delta_AIC[dat_LY75_run$Amplicon==x & mask_target_run])})
+avAIC_LY75_run$minAIC_run <- sapply(avAIC_LY75_run$Amplicon, function(x){min(dat_LY75_run$delta_AIC_run[dat_LY75_run$Amplicon==x & mask_target_run])})
 print(avAIC_LY75_run)
 write.table(avAIC_LY75_run,"LY75_avAIC_run.txt",col.names = T,row.names = F,quote = F, sep="\t")
 
@@ -220,14 +226,15 @@ sensitivity_cox <- function(dat, n_cpg, dat_perCpG, event, covariates, gene){
   print(sprintf("%s CpGs correlated with age (p < 0.05): %d, median rho %.2f; differing by sex (p < 0.05): %d", gene,
                 sum(dat_sens$pval_age < 0.05), median(dat_sens$rho_age), sum(dat_sens$pval_sex < 0.05)))
 
-  # Per amplicon (as Figure 4: mean and minimum over all CpGs of the amplicon)
+  # Per amplicon (as Figure 4: mean and minimum over the target-sequence CpGs of the amplicon)
+  mask_target_sens <- !(dat_sens$ID %in% CpGs_in_primer)
   avAIC_sens <- data.frame(Amplicon = unique(dat_sens$Amplicon), stringsAsFactors = F)
-  avAIC_sens$avAIC <- sapply(avAIC_sens$Amplicon, function(x){mean(dat_sens$delta_AIC[dat_sens$Amplicon==x])})
-  avAIC_sens$avAIC_unadj <- sapply(avAIC_sens$Amplicon, function(x){mean(dat_sens$delta_AIC_unadj[dat_sens$Amplicon==x])})
-  avAIC_sens$avAIC_clin <- sapply(avAIC_sens$Amplicon, function(x){mean(dat_sens$delta_AIC_clin[dat_sens$Amplicon==x])})
-  avAIC_sens$minAIC <- sapply(avAIC_sens$Amplicon, function(x){min(dat_sens$delta_AIC[dat_sens$Amplicon==x])})
-  avAIC_sens$minAIC_unadj <- sapply(avAIC_sens$Amplicon, function(x){min(dat_sens$delta_AIC_unadj[dat_sens$Amplicon==x])})
-  avAIC_sens$minAIC_clin <- sapply(avAIC_sens$Amplicon, function(x){min(dat_sens$delta_AIC_clin[dat_sens$Amplicon==x])})
+  avAIC_sens$avAIC <- sapply(avAIC_sens$Amplicon, function(x){mean(dat_sens$delta_AIC[dat_sens$Amplicon==x & mask_target_sens])})
+  avAIC_sens$avAIC_unadj <- sapply(avAIC_sens$Amplicon, function(x){mean(dat_sens$delta_AIC_unadj[dat_sens$Amplicon==x & mask_target_sens])})
+  avAIC_sens$avAIC_clin <- sapply(avAIC_sens$Amplicon, function(x){mean(dat_sens$delta_AIC_clin[dat_sens$Amplicon==x & mask_target_sens])})
+  avAIC_sens$minAIC <- sapply(avAIC_sens$Amplicon, function(x){min(dat_sens$delta_AIC[dat_sens$Amplicon==x & mask_target_sens])})
+  avAIC_sens$minAIC_unadj <- sapply(avAIC_sens$Amplicon, function(x){min(dat_sens$delta_AIC_unadj[dat_sens$Amplicon==x & mask_target_sens])})
+  avAIC_sens$minAIC_clin <- sapply(avAIC_sens$Amplicon, function(x){min(dat_sens$delta_AIC_clin[dat_sens$Amplicon==x & mask_target_sens])})
   print(avAIC_sens)
   write.table(avAIC_sens, paste0(gene, "_avAIC_sensitivity.txt"), col.names = T, row.names = F, quote = F, sep = "\t")
 
@@ -292,11 +299,12 @@ nonnested_cox <- function(dat, n_cpg, dat_sens, event, bases, gene){
   }
   write.table(dat_nn, paste0(gene, "_AIC_table_nonnested.txt"), col.names = T, row.names = F, quote = F, sep = "\t")
 
-  # Per amplicon (as Figure 4: mean and minimum over all CpGs of the amplicon)
+  # Per amplicon (as Figure 4: mean and minimum over the target-sequence CpGs of the amplicon)
+  mask_target_nn <- !(dat_nn$ID %in% CpGs_in_primer)
   avAIC_nn <- data.frame(Amplicon = unique(dat_nn$Amplicon), stringsAsFactors = F)
   for (cn_j in grep("^delta_AIC", colnames(dat_nn), value = T)){
-    avAIC_nn[,sub("^delta_AIC", "avAIC", cn_j)] <- sapply(avAIC_nn$Amplicon, function(x){mean(dat_nn[dat_nn$Amplicon==x, cn_j])})
-    avAIC_nn[,sub("^delta_AIC", "minAIC", cn_j)] <- sapply(avAIC_nn$Amplicon, function(x){min(dat_nn[dat_nn$Amplicon==x, cn_j])})
+    avAIC_nn[,sub("^delta_AIC", "avAIC", cn_j)] <- sapply(avAIC_nn$Amplicon, function(x){mean(dat_nn[dat_nn$Amplicon==x & mask_target_nn, cn_j])})
+    avAIC_nn[,sub("^delta_AIC", "minAIC", cn_j)] <- sapply(avAIC_nn$Amplicon, function(x){min(dat_nn[dat_nn$Amplicon==x & mask_target_nn, cn_j])})
   }
   print(avAIC_nn)
   write.table(avAIC_nn, paste0(gene, "_avAIC_nonnested.txt"), col.names = T, row.names = F, quote = F, sep = "\t")
