@@ -33,6 +33,13 @@ if (!file.exists(infile_sensitivity)){
   stop("Objects of the main analysis not found: ", infile_sensitivity, ". Run TargetedBisulphite_analysis.R first.")
 }
 
+# RERUN_PERMUTATIONS=FALSE in config.env (default TRUE): read the permutation results of a previous run in PROJECT_DIR
+# (pval_total_list.txt, intra_amplicon_swap_test_LY75_run.txt), skip the plots of the original test and the simulation
+# (fast run). Only valid if the M-values, samples and CpG pairs did not change.
+rerun_permutations <- toupper(Sys.getenv("RERUN_PERMUTATIONS", "TRUE")) != "FALSE"
+infile_perm_previous <- "pval_total_list.txt"
+infile_swap_LY75_run_previous <- "intra_amplicon_swap_test_LY75_run.txt"
+
 # Position-matched CpGs (written by the main analysis) and outputs of the primer-CpG checks (R3.M1)
 infile_matched <- file.path(project_dir, "res_dupl_CpG_position_matched.txt")
 outfile_expected <- file.path(project_dir, "res_dupl_CpG_expected_vs_observed_deviation.txt")
@@ -565,32 +572,41 @@ n_bp_add <- -1
 ## including primer CpGs
 ####################
 
-#NDRG4
-pval_list_NDRG4 <- perform_AIC_analysis(primer_annot_NDRG4,Mval_NDRG4_sort,CRC_annot_sort,"NDRG4")
+if (rerun_permutations){
+  #NDRG4
+  pval_list_NDRG4 <- perform_AIC_analysis(primer_annot_NDRG4,Mval_NDRG4_sort,CRC_annot_sort,"NDRG4")
 
-#GREM1
-pval_list_GREM1 <- perform_AIC_analysis(primer_annot_GREM1,Mval_GREM1_sort,ccRCC_annot_sort,"GREM1")
+  #GREM1
+  pval_list_GREM1 <- perform_AIC_analysis(primer_annot_GREM1,Mval_GREM1_sort,ccRCC_annot_sort,"GREM1")
 
-#LY75
-pval_list_LY75 <- perform_AIC_analysis(primer_annot_LY75,Mval_LY75_sort,melanoma_annot_sort,"LY75")
+  #LY75
+  pval_list_LY75 <- perform_AIC_analysis(primer_annot_LY75,Mval_LY75_sort,melanoma_annot_sort,"LY75")
 
-# Full table
-part_pval_GREM1 <- cbind(rep(names(pval_list_GREM1)[pval_list_GREM1!="No CpGs"],times=as.numeric(unlist(lapply(pval_list_GREM1,nrow)))),
-                         do.call(rbind,pval_list_GREM1[pval_list_GREM1!="No CpGs"]))
-colnames(part_pval_GREM1) <- c("Amplicon",colnames(part_pval_GREM1[2:ncol(part_pval_GREM1)]))
-rownames(part_pval_GREM1) <- 1:nrow(part_pval_GREM1)
-part_pval_NDRG4 <- cbind(rep(names(pval_list_NDRG4)[pval_list_NDRG4!="No CpGs"],times=as.numeric(unlist(lapply(pval_list_NDRG4,nrow)))),
-                         do.call(rbind,pval_list_NDRG4[pval_list_NDRG4!="No CpGs"]))
-colnames(part_pval_NDRG4) <- c("Amplicon",colnames(part_pval_NDRG4[2:ncol(part_pval_NDRG4)]))
-rownames(part_pval_NDRG4) <- 1:nrow(part_pval_NDRG4)
-part_pval_LY75 <- cbind(rep(names(pval_list_LY75)[pval_list_LY75!="No CpGs"],times=as.numeric(unlist(lapply(pval_list_LY75,nrow)))),
-                        do.call(rbind,pval_list_LY75[pval_list_LY75!="No CpGs"]))
-colnames(part_pval_LY75) <- c("Amplicon",colnames(part_pval_LY75[2:ncol(part_pval_LY75)]))
-rownames(part_pval_LY75) <- 1:nrow(part_pval_LY75)
+  # Full table
+  part_pval_GREM1 <- cbind(rep(names(pval_list_GREM1)[pval_list_GREM1!="No CpGs"],times=as.numeric(unlist(lapply(pval_list_GREM1,nrow)))),
+                           do.call(rbind,pval_list_GREM1[pval_list_GREM1!="No CpGs"]))
+  colnames(part_pval_GREM1) <- c("Amplicon",colnames(part_pval_GREM1[2:ncol(part_pval_GREM1)]))
+  rownames(part_pval_GREM1) <- 1:nrow(part_pval_GREM1)
+  part_pval_NDRG4 <- cbind(rep(names(pval_list_NDRG4)[pval_list_NDRG4!="No CpGs"],times=as.numeric(unlist(lapply(pval_list_NDRG4,nrow)))),
+                           do.call(rbind,pval_list_NDRG4[pval_list_NDRG4!="No CpGs"]))
+  colnames(part_pval_NDRG4) <- c("Amplicon",colnames(part_pval_NDRG4[2:ncol(part_pval_NDRG4)]))
+  rownames(part_pval_NDRG4) <- 1:nrow(part_pval_NDRG4)
+  part_pval_LY75 <- cbind(rep(names(pval_list_LY75)[pval_list_LY75!="No CpGs"],times=as.numeric(unlist(lapply(pval_list_LY75,nrow)))),
+                          do.call(rbind,pval_list_LY75[pval_list_LY75!="No CpGs"]))
+  colnames(part_pval_LY75) <- c("Amplicon",colnames(part_pval_LY75[2:ncol(part_pval_LY75)]))
+  rownames(part_pval_LY75) <- 1:nrow(part_pval_LY75)
                 
-pval_total_list <- rbind(part_pval_GREM1,part_pval_NDRG4,part_pval_LY75)
-rownames(pval_total_list) <- 1:nrow(pval_total_list)
-write.table(pval_total_list,file="pval_total_list.txt",col.names=T,row.names=F,quote=F,sep="\t")
+  pval_total_list <- rbind(part_pval_GREM1,part_pval_NDRG4,part_pval_LY75)
+  rownames(pval_total_list) <- 1:nrow(pval_total_list)
+  write.table(pval_total_list,file="pval_total_list.txt",col.names=T,row.names=F,quote=F,sep="\t")
+} else {
+  if (!file.exists(infile_perm_previous)){
+    stop("RERUN_PERMUTATIONS=FALSE but ", infile_perm_previous, " (original permutation test of a previous run) not found")
+  }
+  print(sprintf("RERUN_PERMUTATIONS=FALSE: original permutation test read from %s (previous run); plots in AIC_plots/ and AIC_plots_red/ not redrawn", infile_perm_previous))
+  pval_total_list <- read.table(infile_perm_previous, header = T, sep = "\t", stringsAsFactors = F)
+  print(dim(pval_total_list))
+}
 
 unique(pval_total_list$Amplicon[pval_total_list$fdr<0.10])
 unique(pval_total_list$Amplicon[pval_total_list$pval<0.10])
@@ -621,15 +637,17 @@ unique(pval_total_list$Amplicon[pval_total_list$pval<0.10])
 # unlink("AIC_plots_red/*")
 if(!dir.exists("AIC_plots_red")){dir.create("AIC_plots_red")}
 
-pval_cutoff_red <- 0.05
+if (rerun_permutations){
+  pval_cutoff_red <- 0.05
 
-reduced_AIC_analysis("GREM1",pval_list_GREM1,pval_cutoff_red,dat_GREM1_ROC_logit_perCpG)
+  reduced_AIC_analysis("GREM1",pval_list_GREM1,pval_cutoff_red,dat_GREM1_ROC_logit_perCpG)
 
-reduced_AIC_analysis("NDRG4",pval_list_NDRG4,pval_cutoff_red,dat_NDRG4_ROC_logit_perCpG)
+  reduced_AIC_analysis("NDRG4",pval_list_NDRG4,pval_cutoff_red,dat_NDRG4_ROC_logit_perCpG)
 
-pval_cutoff_red <- 0.10
+  pval_cutoff_red <- 0.10
 
-reduced_AIC_analysis("LY75",pval_list_LY75,pval_cutoff_red,dat_LY75_ROC_logit_perCpG)
+  reduced_AIC_analysis("LY75",pval_list_LY75,pval_cutoff_red,dat_LY75_ROC_logit_perCpG)
+}
 
 
 ## Comparison with the permutation test within samples (main analysis)
@@ -666,31 +684,41 @@ for (gene in unique(summary_swap_perm$Gene)){
 #####################
 # Surv ~ CpG_a + Run vs Surv ~ CpG_b + Run, same target-CpG pairs, permutations, seed and cut-off as the main test.
 # Decision rule (Louis): if the LY75 intra-amplicon results do not change, the main analysis stays without run.
-RNGkind("L'Ecuyer-CMRG")
-set.seed(42)
-info_LY75_run <- pair_info$LY75
-info_LY75_run$cn <- c(info_LY75_run$cn, "Run")
 pairs_LY75 <- res_swap[res_swap$Gene == "LY75",]
-print(sprintf("LY75: permutation test with Run for %d target-CpG pairs", nrow(pairs_LY75)))
-res_swap_LY75_run <- NULL
-for (r in 1:nrow(pairs_LY75)){
-  dat_r <- build_pair_data(info_LY75_run, "LY75", pairs_LY75$CpG_1[r], pairs_LY75$CpG_2[r])
-  dat_r$CpG_a <- as.numeric(scale(dat_r$CpG_a))
-  dat_r$CpG_b <- as.numeric(scale(dat_r$CpG_b))
-  obs_r <- aic_pair_diff(dat_r, "LY75", covariates = "+Run")
-  null_r <- unlist(mclapply(1:n_swap, swap_pair, dat = dat_r, gene = "LY75", covariates = "+Run", mc.cores = 40))
-  mask_ok <- !is.na(null_r)
-  pval_swap_run <- mean(abs(null_r[mask_ok]) >= abs(obs_r) - 1e-9)
-  res_swap_LY75_run <- rbind(res_swap_LY75_run, data.frame(Amplicon = pairs_LY75$Amplicon[r], CpG_1 = pairs_LY75$CpG_1[r],
-                                                           CpG_2 = pairs_LY75$CpG_2[r], n_samples = nrow(dat_r),
-                                                           delta_AIC_obs = pairs_LY75$delta_AIC_obs[r], delta_AIC_obs_run = obs_r,
-                                                           pval_swap = pairs_LY75$pval_swap[r], pval_swap_run = pval_swap_run,
-                                                           n_swap_ok_run = sum(mask_ok), stringsAsFactors = F))
+if (rerun_permutations){
+  RNGkind("L'Ecuyer-CMRG")
+  set.seed(42)
+  info_LY75_run <- pair_info$LY75
+  info_LY75_run$cn <- c(info_LY75_run$cn, "Run")
+  print(sprintf("LY75: permutation test with Run for %d target-CpG pairs", nrow(pairs_LY75)))
+  res_swap_LY75_run <- NULL
+  for (r in 1:nrow(pairs_LY75)){
+    dat_r <- build_pair_data(info_LY75_run, "LY75", pairs_LY75$CpG_1[r], pairs_LY75$CpG_2[r])
+    dat_r$CpG_a <- as.numeric(scale(dat_r$CpG_a))
+    dat_r$CpG_b <- as.numeric(scale(dat_r$CpG_b))
+    obs_r <- aic_pair_diff(dat_r, "LY75", covariates = "+Run")
+    null_r <- unlist(mclapply(1:n_swap, swap_pair, dat = dat_r, gene = "LY75", covariates = "+Run", mc.cores = 40))
+    mask_ok <- !is.na(null_r)
+    pval_swap_run <- mean(abs(null_r[mask_ok]) >= abs(obs_r) - 1e-9)
+    res_swap_LY75_run <- rbind(res_swap_LY75_run, data.frame(Amplicon = pairs_LY75$Amplicon[r], CpG_1 = pairs_LY75$CpG_1[r],
+                                                             CpG_2 = pairs_LY75$CpG_2[r], n_samples = nrow(dat_r),
+                                                             delta_AIC_obs = pairs_LY75$delta_AIC_obs[r], delta_AIC_obs_run = obs_r,
+                                                             pval_swap = pairs_LY75$pval_swap[r], pval_swap_run = pval_swap_run,
+                                                             n_swap_ok_run = sum(mask_ok), stringsAsFactors = F))
+  }
+  RNGkind(rng_kind_ori)
+  res_swap_LY75_run$fdr_swap_amplicon_run <- ave(res_swap_LY75_run$pval_swap_run, res_swap_LY75_run$Amplicon,
+                                                 FUN = function(p){p.adjust(p, method = "BH")})
+  write.table(res_swap_LY75_run, "intra_amplicon_swap_test_LY75_run.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+} else {
+  if (!file.exists(infile_swap_LY75_run_previous)){
+    stop("RERUN_PERMUTATIONS=FALSE but ", infile_swap_LY75_run_previous, " (LY75 test with run of a previous run) not found")
+  }
+  print(sprintf("RERUN_PERMUTATIONS=FALSE: LY75 permutation test with Run read from %s (previous run)", infile_swap_LY75_run_previous))
+  res_swap_LY75_run <- read.table(infile_swap_LY75_run_previous, header = T, sep = "\t", stringsAsFactors = F)
+  print(dim(res_swap_LY75_run))
+  # expect: 260 rows
 }
-RNGkind(rng_kind_ori)
-res_swap_LY75_run$fdr_swap_amplicon_run <- ave(res_swap_LY75_run$pval_swap_run, res_swap_LY75_run$Amplicon,
-                                               FUN = function(p){p.adjust(p, method = "BH")})
-write.table(res_swap_LY75_run, "intra_amplicon_swap_test_LY75_run.txt", col.names = T, row.names = F, quote = F, sep = "\t")
 
 # Summary: main vs with Run (counts, chance level, BH within amplicon, amplicons with a star, agreement of p-values)
 n_pairs_LY75 <- nrow(res_swap_LY75_run)
@@ -717,7 +745,11 @@ print(sprintf("LY75 samples per pair with Run: %d-%d",
 ##############################################
 # Supplementary Figure 4: original permutation test (between samples) vs revised permutation test (within samples). Run last: the script sets its own seed
 # and RNG kind. Output in simulation_intra_amplicon/ (~10-20 min on 40 cores).
-source(file.path(project_dir,"Simulation_intra_amplicon_tests.R"))
+if (rerun_permutations){
+  source(file.path(project_dir,"Simulation_intra_amplicon_tests.R"))
+} else {
+  print("RERUN_PERMUTATIONS=FALSE: simulation skipped (simulation_intra_amplicon/ of the previous run kept)")
+}
 
 #############
 # Close log #

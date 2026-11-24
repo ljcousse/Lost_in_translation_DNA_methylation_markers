@@ -54,7 +54,7 @@ The scripts expect the repository files in `PROJECT_DIR` (the pre-processing cal
 2. **Main analysis:** `Rscript TargetedBisulphite_analysis.R`. Output goes to `PROJECT_DIR`; a time-stamped log (`TargetedBisulphite_analysis_<date>_<time>.log`) records the console output and session information. At the end, the objects needed by the sensitivity analyses are saved in `output_for_sensitivity_analysis/objects_for_sensitivity_analysis.Rda`.
 3. **Sensitivity analyses:** `Rscript TargetedBisulphite_sensitivity.R` (needs `output_for_sensitivity_analysis/objects_for_sensitivity_analysis.Rda`; own log `TargetedBisulphite_sensitivity_<date>_<time>.log`). The simulation writes to `simulation_intra_amplicon/`.
 
-Both permutation tests and the simulation use `parallel::mclapply` with 40 cores, the amplicon assignment with 20; change `mc.cores` (simulation: `n_cores`) for smaller machines. `mclapply` forks, so on Windows use 1 core. The original permutation test (sensitivity script) is the slowest step.
+For a fast rerun of the R scripts without the permutation tests and the simulation, set `RERUN_PERMUTATIONS=FALSE` in `config.env`: their results are then read from a previous full run in `PROJECT_DIR` (`intra_amplicon_swap_test.txt`, `pval_total_list.txt`, `intra_amplicon_swap_test_LY75_run.txt`); only valid if the M-values, samples and CpG pairs did not change. Both permutation tests and the simulation use `parallel::mclapply` with 40 cores, the amplicon assignment with 20; change `mc.cores` (simulation: `n_cores`) for smaller machines. `mclapply` forks, so on Windows use 1 core. The original permutation test (sensitivity script) is the slowest step.
 
 ### Main outputs
 

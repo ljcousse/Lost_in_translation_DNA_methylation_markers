@@ -1176,6 +1176,10 @@ source(file.path(project_dir,"Intra_amplicon_diff_functions.R"))
 ## Define settings
 #####################
 n_swap <- 2000
+# RERUN_PERMUTATIONS=FALSE in config.env (default TRUE): read the permutation results of a previous run in PROJECT_DIR
+# instead of recomputing them (fast run). Only valid if the M-values, samples and CpG pairs did not change.
+rerun_permutations <- toupper(Sys.getenv("RERUN_PERMUTATIONS", "TRUE")) != "FALSE"
+infile_swap_previous <- "intra_amplicon_swap_test.txt"
 cutoff_star <- c(NDRG4 = 0.05, GREM1 = 0.05, LY75 = 0.05) # one cut-off for all genes (Louis 2026-11-16)
 # Amplicon plots (intra_amplicon_plot)
 cex_AIC_plots <- 1.25
@@ -1267,34 +1271,44 @@ pair_info <- list(NDRG4 = list(Mval = Mval_NDRG4_sort, annot = CRC_annot_sort, c
                   GREM1 = list(Mval = Mval_GREM1_sort, annot = ccRCC_annot_sort, cn = c("Followup_time","NK_death","Gender","Age"), primer_annot = primer_annot_GREM1),
                   LY75 = list(Mval = Mval_LY75_sort, annot = melanoma_annot_sort, cn = c("Followup_time","NK_death","Gender","Age"), primer_annot = primer_annot_LY75))
 rng_kind_ori <- RNGkind()[1]
-RNGkind("L'Ecuyer-CMRG")
-set.seed(42)
-res_swap <- NULL
-for (gene in names(pair_info)){
-  info <- pair_info[[gene]]
-  pairs <- get_CpG_pairs(info$primer_annot, info$Mval)
-  mask_pairs <- !(pairs$CpG_1 %in% primer_CpG_ids) & !(pairs$CpG_2 %in% primer_CpG_ids)
-  print(sprintf("%s: permutation test (within samples) for %d target-CpG pairs (pairs with a primer CpG removed: %d/%d)", gene, sum(mask_pairs),
-                sum(!mask_pairs), length(mask_pairs)))
-  pairs <- pairs[mask_pairs,]
-  for (r in 1:nrow(pairs)){
-    dat_r <- build_pair_data(info, gene, pairs$CpG_1[r], pairs$CpG_2[r])
-    dat_r$CpG_a <- as.numeric(scale(dat_r$CpG_a))
-    dat_r$CpG_b <- as.numeric(scale(dat_r$CpG_b))
-    obs_r <- aic_pair_diff(dat_r, gene)
-    null_r <- unlist(mclapply(1:n_swap, swap_pair, dat = dat_r, gene = gene, mc.cores = 40))
-    mask_ok <- !is.na(null_r)
-    pval_swap <- mean(abs(null_r[mask_ok]) >= abs(obs_r) - 1e-9)
-    res_swap <- rbind(res_swap, data.frame(Gene = gene, Amplicon = pairs$Amplicon[r], CpG_1 = pairs$CpG_1[r],
-                                           CpG_2 = pairs$CpG_2[r], delta_AIC_obs = obs_r,
-                                           pval_swap = pval_swap, n_swap_ok = sum(mask_ok), stringsAsFactors = F))
+if (rerun_permutations){
+  RNGkind("L'Ecuyer-CMRG")
+  set.seed(42)
+  res_swap <- NULL
+  for (gene in names(pair_info)){
+    info <- pair_info[[gene]]
+    pairs <- get_CpG_pairs(info$primer_annot, info$Mval)
+    mask_pairs <- !(pairs$CpG_1 %in% primer_CpG_ids) & !(pairs$CpG_2 %in% primer_CpG_ids)
+    print(sprintf("%s: permutation test (within samples) for %d target-CpG pairs (pairs with a primer CpG removed: %d/%d)", gene, sum(mask_pairs),
+                  sum(!mask_pairs), length(mask_pairs)))
+    pairs <- pairs[mask_pairs,]
+    for (r in 1:nrow(pairs)){
+      dat_r <- build_pair_data(info, gene, pairs$CpG_1[r], pairs$CpG_2[r])
+      dat_r$CpG_a <- as.numeric(scale(dat_r$CpG_a))
+      dat_r$CpG_b <- as.numeric(scale(dat_r$CpG_b))
+      obs_r <- aic_pair_diff(dat_r, gene)
+      null_r <- unlist(mclapply(1:n_swap, swap_pair, dat = dat_r, gene = gene, mc.cores = 40))
+      mask_ok <- !is.na(null_r)
+      pval_swap <- mean(abs(null_r[mask_ok]) >= abs(obs_r) - 1e-9)
+      res_swap <- rbind(res_swap, data.frame(Gene = gene, Amplicon = pairs$Amplicon[r], CpG_1 = pairs$CpG_1[r],
+                                             CpG_2 = pairs$CpG_2[r], delta_AIC_obs = obs_r,
+                                             pval_swap = pval_swap, n_swap_ok = sum(mask_ok), stringsAsFactors = F))
+    }
   }
+  RNGkind(rng_kind_ori)
+  # expect (v18): NDRG4 289, GREM1 204, LY75 260 target-CpG pairs
+  res_swap$fdr_swap_amplicon <- ave(res_swap$pval_swap, res_swap$Amplicon, FUN = function(p){p.adjust(p, method = "BH")})
+  res_swap$fdr_swap_all <- p.adjust(res_swap$pval_swap, method = "BH")
+  write.table(res_swap, "intra_amplicon_swap_test.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+} else {
+  if (!file.exists(infile_swap_previous)){
+    stop("RERUN_PERMUTATIONS=FALSE but ", infile_swap_previous, " (permutation test of a previous run) not found in PROJECT_DIR")
+  }
+  print(sprintf("RERUN_PERMUTATIONS=FALSE: permutation test (within samples) read from %s (previous run)", infile_swap_previous))
+  res_swap <- read.table(infile_swap_previous, header = T, sep = "\t", stringsAsFactors = F)
+  print(table(res_swap$Gene))
+  # expect: GREM1 204, LY75 260, NDRG4 289
 }
-RNGkind(rng_kind_ori)
-# expect (v18): NDRG4 289, GREM1 204, LY75 260 target-CpG pairs
-res_swap$fdr_swap_amplicon <- ave(res_swap$pval_swap, res_swap$Amplicon, FUN = function(p){p.adjust(p, method = "BH")})
-res_swap$fdr_swap_all <- p.adjust(res_swap$pval_swap, method = "BH")
-write.table(res_swap, "intra_amplicon_swap_test.txt", col.names = T, row.names = F, quote = F, sep = "\t")
 
 # Per amplicon: star if at least one pair has p < cut-off (Figure 4 and Figure 5)
 res_swap$cutoff <- cutoff_star[res_swap$Gene]
